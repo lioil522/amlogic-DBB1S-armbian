@@ -1182,6 +1182,32 @@ refactor_rootfs() {
     network_service="usr/lib/systemd/system/networking.service"
     [[ -f "${network_service}" ]] && sed -i "s|^#*TimeoutStartSec=.*|TimeoutStartSec=10sec|g" ${network_service}
 
+    # Custom cleanup for Dangbei B1S (s912-b1s) to drastically reduce image size
+    if [[ "${board}" == "s912-b1s" ]]; then
+        echo -e "${INFO} Slimming down image for s912-b1s..."
+
+        # NOTE: DTB 文件位于 bootfs 分区，需使用 ${tag_bootfs} 绝对路径。仅保留 B1S 此一型号所需
+        find ${tag_bootfs}/dtb/amlogic/ -maxdepth 1 -name "*.dtb" ! -name "meson-gxm-b1s*.dtb" -delete 2>/dev/null
+
+        # 删除无关的 U-Boot 文件 (仅保留我们用的 u-boot-s905x-s912.bin)
+        find ${tag_bootfs}/ -maxdepth 1 -name "u-boot-*.bin" ! -name "u-boot-s905x-s912.bin" -delete 2>/dev/null
+        find usr/lib/u-boot/ -maxdepth 1 -name "u-boot-*.bin" ! -name "u-boot-s905x-s912.bin" -delete 2>/dev/null
+
+        # 删除非博通系的无用 WiFi/BT 固件
+        rm -rf usr/lib/firmware/{qcom,mediatek,rkwifi,ath10k,ath11k,ath12k,rtw89,aic8800,intel,uwe5622,ap6212,ap6275p,ap6276p,aic8800_sdio,rtl_bt,rtlwifi,qca} 2>/dev/null
+
+        # 删除不适用于 ARM 嵌入式的 x86/桌面级驱动模块
+        rm -rf usr/lib/modules/*/kernel/drivers/platform/{x86,chrome,surface,mellanox} 2>/dev/null
+        rm -rf usr/lib/modules/*/kernel/drivers/gpu/drm/{amd,i915,nouveau,radeon,xe,vmwgfx,mgag200,ast} 2>/dev/null
+        rm -rf usr/lib/modules/*/kernel/drivers/net/wireless/{intel,mediatek,ath,realtek,quantenna,microchip,silabs} 2>/dev/null
+        rm -rf usr/lib/modules/*/kernel/drivers/{infiniband,isdn,thunderbolt} 2>/dev/null
+
+        # 禁用不需要的服务
+        rm -f etc/systemd/system/multi-user.target.wants/{openvpn.service,rpcbind.service,vnstat.service} 2>/dev/null
+
+        echo -e "${INFO} s912-b1s cleanup done."
+    fi
+
     # Add tasks that need to be executed on initial startup
     armbian_firstrun="usr/lib/armbian/armbian-firstrun"
     [[ -f "${armbian_firstrun}" ]] && sed -i '/\/etc\/armbian-release/i\[[ -x "/usr/sbin/armbian-fix" ]] && . /usr/sbin/armbian-fix' ${armbian_firstrun}
