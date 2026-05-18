@@ -12,7 +12,7 @@ on:
       set_release:
         description: "Select OS Release."
         required: false
-        default: "trixie"
+        default: "bookworm"
         type: choice
         options:
           - trixie
@@ -234,7 +234,7 @@ on:
       armbian_kernel:
         description: "Select kernel version."
         required: false
-        default: "6.12.y_6.18.y"
+        default: "6.18.y"
         type: choice
         options:
           - 5.10.y
