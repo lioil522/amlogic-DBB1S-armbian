@@ -436,6 +436,7 @@ jobs:
         if: ${{ steps.down.outputs.status == 'success' && !cancelled() }}
         with:
           build_target: armbian
+          kernel_tags: stable
           armbian_path: build/output/images/*.img
           armbian_board: ${{ inputs.armbian_board }}
           armbian_kernel: ${{ inputs.armbian_kernel }}
