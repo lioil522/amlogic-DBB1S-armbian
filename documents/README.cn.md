@@ -208,7 +208,7 @@ GitHub Actions 默认编译空间为 84G，去除系统和必要软件包后可�
     sudo mkfs.xfs /dev/github/runner
     sudo mkdir -p /builder
     sudo mount /dev/github/runner /builder
-    sudo chown -R runner.runner /builder
+    sudo chown -R runner:runner /builder
     df -Th
 ```
 
@@ -222,13 +222,13 @@ Armbian 系统 [Docker](https://hub.docker.com/u/ophub) 镜像的制作方法请
 
 ```yaml
 - name: Upload Armbian image to Release
-  uses: ncipollo/release-action@main
+  uses: ophub/upload-to-release@main
   if: ${{ env.PACKAGED_STATUS }} == 'success' && !cancelled()
   with:
     tag: Armbian_${{ env.ARMBIAN_RELEASE }}_${{ env.PACKAGED_OUTPUTDATE }}
     artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
-    allowUpdates: true
-    token: ${{ secrets.GITHUB_TOKEN }}
+    allow_updates: true
+    gh_token: ${{ secrets.GITHUB_TOKEN }}
     body: |
       These are the Armbian OS image
       * OS information
@@ -1503,6 +1503,8 @@ Amlogic 设备在 `/boot/uEnv.txt` 文件中配置。Rockchip 和 Allwinner 设�
 
 - 例如 `Home Assistant Supervisor` 仅支持 `docker cgroup v1`，而当前 docker 默认安装 v2 版本。如需切换至 v1，可在 cmdline 中添加 `systemd.unified_cgroup_hierarchy=0` 参数，重启后即可切换至 `docker cgroup v1`。
 
+- 通过在 cmdline 中添加 `mmc_core.max_freq=50000000` 设置，可以限制 eMMC 最大频率为 `50MHz`。某些 S905L2 盒子 eMMC 在高频（HS200/HS400, 100MHz+）下不稳定，降频可解决启动失败/随机崩溃，读写错误和不稳定等问题。
+
 - 通过在 cmdline 中添加 `max_loop=128` 设置，可以调整允许的 loop 挂载数量。
 
 - 通过在 cmdline 中添加 `usbcore.usbfs_memory_mb=1024` 设置，可以永久将 USBFS 内存缓冲区从默认的 `16 mb` 改为更大（`cat /sys/module/usbcore/parameters/usbfs_memory_mb`），提升 USB 传输大文件的能力。
@@ -1666,7 +1668,7 @@ max-frequency = <208000000>;
 };
 ```
 
-通常将 `&sd_emmc_c` 的频率从 `max-frequency = <200000000>;` 下调至 `max-frequency = <100000000>;` 即可解决。若无效可继续下调至 `50000000` 进行测试，同时可通过调整 `&sd_emmc_b` 配置 `USB/SD/TF`，或使用 `sd-uhs-sdr` 限速。可通过修改 dts 文件并[编译](https://github.com/ophub/amlogic-s9xxx-armbian/tree/main/compile-kernel)生成测试文件，也可参照 `12.13 节` 的方法对现有 dtb 文件进行反编译修改。反编译 dtb 文件时使用十六进制值，其中十进制的 `200000000` 对应的十六进制为 `0xbebc200`，十进制的 `100000000` 对应的十六进制为 `0x5f5e100`，十进制的 `50000000` 对应的十六进制为 `0x2faf080`，十进制的 `25000000` 对应的十六进制为 `0x17d7840`。
+通常将 `&sd_emmc_c` 的频率从 `max-frequency = <200000000>;` 下调至 `max-frequency = <100000000>;` 即可解决。若无效可继续下调至 `50000000` 进行测试，同时可通过调整 `&sd_emmc_b` 配置 `USB/SD/TF`，或使用 `sd-uhs-sdr` 限速。可通过修改 dts 文件并[编译](https://github.com/ophub/amlogic-s9xxx-armbian/tree/main/compile-kernel)生成测试文件，也可参照 `12.13 节` 的方法对现有 dtb 文件进行反编译修改。反编译 dtb 文件时使用十六进制值，其中十进制的 `200000000` 对应的十六进制为 `0xbebc200`，十进制的 `100000000` 对应的十六进制为 `0x5f5e100`，十进制的 `50000000` 对应的十六进制为 `0x2faf080`，十进制的 `25000000` 对应的十六进制为 `0x17d7840`。也可以参照 `12.14 节` 的 cmdline 设置方法，在 cmdline 中添加 `mmc_core.max_freq=50000000` 参数来限制 eMMC 的最大频率来解决读写错误和不稳定等问题。
 
 除软件层面的优化外，还可通过[硬件升级](https://github.com/ophub/amlogic-s9xxx-armbian/issues/998)和[动手改造](https://www.right.com.cn/forum/thread-901586-1-1.html)解决。
 
