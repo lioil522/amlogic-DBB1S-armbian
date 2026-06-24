@@ -1178,7 +1178,7 @@ refactor_rootfs() {
         echo -e "${INFO} Slimming down image for s912-b1s..."
 
         # NOTE: DTB 文件位于 bootfs 分区，需使用 ${tag_bootfs} 绝对路径。仅保留 B1S 此一型号所需
-        find ${tag_bootfs}/dtb/amlogic/ -maxdepth 1 -name "*.dtb" ! -name "meson-gxm-b1s*.dtb" -delete 2>/dev/null
+        find ${tag_bootfs}/dtb/amlogic/ -maxdepth 1 -name "*.dtb" ! -name "meson-gxm-dangbei-b1s*.dtb" -delete 2>/dev/null
 
         # 删除无关的 U-Boot 文件 (仅保留我们用的 u-boot-s905x-s912.bin)
         find ${tag_bootfs}/ -maxdepth 1 -name "u-boot-*.bin" ! -name "u-boot-s905x-s912.bin" -delete 2>/dev/null
