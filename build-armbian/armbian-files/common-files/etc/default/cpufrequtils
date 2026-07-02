@@ -19,4 +19,4 @@ MAX_SPEED="$(cat /sys/devices/system/cpu/${MAX_CORE_CPU}/cpufreq/scaling_availab
 
 # GOVERNOR listed in: cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
 # GOVERNOR Options: conservative userspace powersave ondemand performance schedutil
-GOVERNOR="schedutil"
+GOVERNOR="performance"
