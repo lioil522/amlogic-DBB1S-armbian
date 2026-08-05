@@ -1,0 +1,205 @@
+#==========================================================================
+# Description: Build Armbian x86 server image
+# Copyright (C) 2021 https://github.com/ophub/amlogic-s9xxx-armbian
+#==========================================================================
+
+name: Build Armbian x86 server image
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      set_release:
+        description: "Select OS Release."
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - trixie
+          - bookworm
+          - resolute
+          - noble
+      publish_docker:
+        description: "Publish Docker image"
+        required: false
+        default: "ophub/armbian"
+        type: choice
+        options:
+          - ophub/armbian
+          - none
+
+env:
+  TZ: Etc/UTC
+  ROOTFS_SCRIPT: compile-kernel/tools/script/docker/build_armbian_rootfs_file.sh
+  MAKE_DOCKER_SH: compile-kernel/tools/script/docker/build_armbian_docker_image.sh
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set build matrix based on set_release input
+        id: set-matrix
+        run: |
+          if [[ "${{ inputs.set_release }}" == "all" ]]; then
+            MATRIX='{"include":[{"release":"trixie"},{"release":"bookworm"},{"release":"resolute"},{"release":"noble"}]}'
+          else
+            MATRIX='{"include":[{"release":"${{ inputs.set_release }}"}]}'
+          fi
+          echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: setup
+    runs-on: ubuntu-24.04
+    if: ${{ github.event.repository.owner.id == github.event.sender.id }}
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    name: build-armbian-x86-${{ matrix.release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize the build environment
+        id: init
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          docker rmi -f $(docker images -q) 2>/dev/null || true
+          [[ -n "${AGENT_TOOLSDIRECTORY}" ]] && sudo rm -rf "${AGENT_TOOLSDIRECTORY}"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android 2>/dev/null
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
+          sudo -E apt-get -y update
+          sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
+          sudo -E apt-get -y install $(curl -fsSL https://ophub.org/ubuntu2404-build-armbian-depends)
+          sudo -E systemctl daemon-reload
+          #sudo -E apt-get -y full-upgrade
+          sudo -E apt-get -y autoremove --purge
+          sudo -E apt-get clean
+          sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
+          sudo rm -rf ~/{.cargo,.dotnet,.rustup}
+          sudo -E timedatectl set-timezone "${TZ:-Etc/UTC}"
+          sudo -E ntpdate ntp.ubuntu.com 0.pool.ntp.org || true
+          sudo -E timedatectl set-ntp true
+          date -u
+          timedatectl status || true
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Create virtual disk for extended storage
+        run: |
+          mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 1)
+          root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 4)
+          sudo truncate -s "${mnt_size}"G /mnt/mnt.img
+          sudo truncate -s "${root_size}"G /root.img
+          sudo losetup /dev/loop6 /mnt/mnt.img
+          sudo losetup /dev/loop7 /root.img
+          sudo pvcreate /dev/loop6
+          sudo pvcreate /dev/loop7
+          sudo vgcreate github /dev/loop6 /dev/loop7
+          sudo lvcreate -n runner -l 100%FREE github
+          sudo mkfs.xfs -f -i sparse=0 -b size=4096 /dev/github/runner
+          sudo mkdir -p /builder
+          sudo mount /dev/github/runner /builder
+          sudo chown -R runner:runner /builder
+          df -Th
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Download source code
+        id: down
+        working-directory: /builder
+        if: ${{ steps.init.outputs.status == 'success' && !cancelled() }}
+        run: |
+          df -hT ${PWD}
+          git clone -q --single-branch --depth=1 --branch=main https://github.com/armbian/build.git build
+          ln -sf /builder/build ${{ github.workspace }}/build
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Compile Armbian [ ${{ matrix.release }} ]
+        id: compile
+        working-directory: /builder
+        if: ${{ steps.down.outputs.status == 'success' && !cancelled() }}
+        run: |
+          # Enable QEMU emulation for ARM cross-compilation
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null || true
+          # Compile options reference: https://docs.armbian.com/Developer-Guide_Build-Options
+          cd build/
+              ./compile.sh RELEASE=${{ matrix.release }} BOARD=uefi-x86 BRANCH=current BUILD_MINIMAL=no \
+                           BUILD_ONLY=default HOST=armbian BUILD_DESKTOP=no EXPERT=yes KERNEL_CONFIGURE=no \
+                           COMPRESS_OUTPUTIMAGE="sha" SHARE_LOG=yes
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Organize output files and reclaim disk space
+        id: clean
+        if: ${{ steps.compile.outputs.status == 'success' && !cancelled() }}
+        run: |
+          # Extract essential artifacts and remove build files
+          chmod +x ${ROOTFS_SCRIPT}
+          ${ROOTFS_SCRIPT} -v ${{ matrix.release }} -s true -c true -k false -p amd64
+          # Remove build files while preserving output
+          [[ -d "armbian" ]] || mkdir armbian
+          cp -af build/output/images/* armbian/
+          rm -rf build
+          # Display disk usage after cleanup
+          df -hT ${PWD}
+          echo "build_tag=Armbian_amd64_server_$(date +"%Y.%m")" >> ${GITHUB_ENV}
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Build the Docker image
+        id: makedocker
+        if: ${{ inputs.publish_docker != 'none' && !cancelled() }}
+        run: |
+          chmod +x ${MAKE_DOCKER_SH}
+          ${MAKE_DOCKER_SH} ${{ matrix.release }} amd64
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Upload Armbian image to Release
+        uses: ophub/upload-to-releases@main
+        if: ${{ steps.clean.outputs.status == 'success' && !cancelled() }}
+        with:
+          tag: ${{ env.build_tag }}
+          artifacts: "armbian/*,out/*"
+          allow_updates: true
+          remove_artifacts: false
+          replaces_artifacts: true
+          make_latest: false
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ### Armbian Image Information
+            - Default username: `root`
+            - Default password: `1234`
+            ### Applicable Platform
+            - 💻 `amd64(uefi-x86)`
+            - 🐋 Docker image: https://hub.docker.com/u/ophub
+
+      - name: Login to Docker Hub
+        id: login
+        if: ${{ steps.makedocker.outputs.status == 'success' && !cancelled() }}
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Load and push image to Docker Hub
+        id: push
+        if: ${{ steps.makedocker.outputs.status == 'success' && !cancelled() }}
+        run: |
+          # Load the offline Docker image built by build_armbian_docker_image.sh
+          offline_image="$(ls out/*.tar.gz 2>/dev/null | head -n 1)"
+          [[ -z "${offline_image}" ]] && echo "Error: No offline image found." && exit 1
+          loaded_image="$(docker load -i "${offline_image}" | grep -oP 'Loaded image: \K.*')"
+          [[ -z "${loaded_image}" ]] && echo "Error: Failed to load Docker image." && exit 1
+          echo "Loaded image: ${loaded_image}"
+
+          # Tag for Docker Hub
+          docker tag "${loaded_image}" "${{ inputs.publish_docker }}-${{ matrix.release }}:amd64"
+
+          # Push to Docker Hub
+          docker push "${{ inputs.publish_docker }}-${{ matrix.release }}:amd64"
+
+          echo "status=success" >> ${GITHUB_OUTPUT}

@@ -1,0 +1,194 @@
+#!/bin/bash
+#==============================================================================================
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# This file is a part of the Rebuild Armbian
+# https://github.com/ophub/amlogic-s9xxx-armbian
+#
+# Description: Compile the kernel using an Armbian Docker container
+# Copyright (C) 2021~ https://www.kernel.org
+# Copyright (C) 2021~ https://github.com/unifreq
+# Copyright (C) 2021~ https://github.com/ophub/amlogic-s9xxx-armbian
+#
+# Command: sudo ./recompile
+# Command optional parameters please refer to the source code repository
+#
+#======================================= Functions list =======================================
+#
+# error_msg                : Output error message and exit
+#
+# init_var                 : Initialize all variables
+# install_docker_engine    : Install Docker engine if not present
+# launch_docker_container  : Launch the Armbian Docker container
+# configure_and_compile    : Configure the Docker environment and compile the kernel
+#
+#=============================== Set make environment variables ===============================
+#
+# Set config and patch paths
+current_path="${PWD}"
+config_path="${current_path}/compile-kernel/tools/config"
+kernel_patch_path="${current_path}/compile-kernel/tools/patch"
+
+# Set Docker host mount directory and image
+docker_hostpath="${PWD}"
+docker_image="ophub/armbian-trixie:arm64"
+docker_container="armbian-ophub"
+docker_script="/usr/sbin/armbian-kernel"
+
+# Get host architecture and release info
+arch_info="$(uname -m)"
+host_id="$(cat /etc/os-release 2>/dev/null | grep '^ID=.*' | cut -d'=' -f2)"
+host_release="$(cat /etc/os-release 2>/dev/null | grep '^VERSION_CODENAME=.*' | cut -d'=' -f2)"
+
+# Set font color
+STEPS="[\033[95m STEPS \033[0m]"
+INFO="[\033[94m INFO \033[0m]"
+SUCCESS="[\033[92m SUCCESS \033[0m]"
+WARNING="[\033[93m WARNING \033[0m]"
+ERROR="[\033[91m ERROR \033[0m]"
+#
+#==============================================================================================
+
+error_msg() {
+    echo -e "${ERROR} ${1}"
+    exit 1
+}
+
+init_var() {
+    echo -e "${STEPS} Initializing variables..."
+
+    # If it is followed by [ : ], it means that the option requires a parameter value
+    local options="k:a:n:m:p:r:t:c:d:s:z:l:f:h:i:"
+    parsed_args=$(getopt -o "${options}" -- "${@}")
+    [[ ${?} -ne 0 ]] && error_msg "Parameter parsing failed."
+    eval set -- "${parsed_args}"
+
+    while true; do
+        case "${1}" in
+        -h | --DockerHostpath)
+            docker_hostpath="${2}"
+            shift 2
+            ;;
+        -i | --DockerImage)
+            docker_image="${2}"
+            shift 2
+            ;;
+        # Ignore parameters used by the Armbian Docker container
+        -k | -a | -n | -m | -p | -r | -t | -c | -d | -s | -z | -l | -f)
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            [[ -n "${1}" ]] && error_msg "Invalid option [ ${1} ]!"
+            break
+            ;;
+        esac
+    done
+}
+
+install_docker_engine() {
+    echo -e "${STEPS} Installing Docker engine..."
+    curl -fsSL https://get.docker.com | sh
+}
+
+launch_docker_container() {
+    echo -e "${STEPS} Launching the Armbian Docker container..."
+
+    # Check if the Armbian Docker container is running
+    if [[ "$(docker ps -q -f name=${docker_container})" ]]; then
+        echo -e "${INFO} The docker container [ ${docker_container} ] is running."
+        container_freshly_started="no"
+    else
+        # Remove the stopped Armbian Docker container
+        [[ "$(docker ps -aq -f status=exited -f name=${docker_container})" ]] && {
+            echo -e "${INFO} Removing the stopped Docker container [ ${docker_container} ]..."
+            docker rm -f ${docker_container} >/dev/null 2>&1
+        }
+
+        # Enable QEMU emulation only for cross-arch hosts. When the host is already
+        # aarch64 we are running natively and do not need binfmt registration.
+        if [[ "${arch_info}" != "aarch64" ]]; then
+            echo -e "${INFO} Enable QEMU emulation for multi-architecture builds..."
+            docker run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null || true
+        else
+            echo -e "${INFO} Native aarch64 host detected, skipping QEMU registration."
+        fi
+
+        # Set Docker mount paths
+        echo -e "${INFO} Setting up Docker host mount paths..."
+        compile_path="${docker_hostpath}/compile-kernel"
+        ccache_path="${docker_hostpath}/ccache"
+        [[ -d "${compile_path}" ]] || mkdir -p ${compile_path}
+        [[ -d "${ccache_path}" ]] || mkdir -p ${ccache_path}
+
+        # Pull the Armbian Docker image. Use --restart=no because this is a one-shot
+        # build container; auto-restart on host reboot is not desirable here.
+        echo -e "${INFO} Pulling the Docker image: [ ${docker_image} ]..."
+        docker run -d --privileged \
+            --name ${docker_container} \
+            -v ${compile_path}:/opt/kernel/compile-kernel \
+            -v ${ccache_path}:/root/.ccache \
+            -v /etc/localtime:/etc/localtime:ro \
+            -v /etc/timezone:/etc/timezone:ro \
+            -e CCACHE_DIR=/root/.ccache \
+            --restart=no \
+            ${docker_image}
+        container_freshly_started="yes"
+    fi
+}
+
+configure_and_compile() {
+    echo -e "${STEPS} Configuring the Docker environment and compiling the kernel..."
+
+    # Synchronize server time using ntpdate if it is available.
+    if command -v ntpdate >/dev/null 2>&1; then
+        echo -e "${INFO} Synchronizing server time."
+        ntpdate ntp.ubuntu.com 0.pool.ntp.org || true
+    fi
+
+    # Only restart when reusing a pre-existing container; a freshly started one
+    # is already healthy and an immediate restart only wastes the startup time.
+    if [[ "${container_freshly_started:-no}" != "yes" ]]; then
+        echo -e "${INFO} Restarting Docker container..."
+        docker restart ${docker_container} >/dev/null && sleep 5
+    fi
+
+    echo -e "${INFO} Syncing scripts in Docker container..."
+    docker exec -i "${docker_container}" bash "${docker_script}" -u
+
+    echo -e "${INFO} Injecting custom configs into Docker container..."
+    [[ -d "${config_path}" ]] && docker cp ${config_path}/. "${docker_container}":/opt/kernel/compile-kernel/tools/config/
+    docker exec -i "${docker_container}" ls -Alh /opt/kernel/compile-kernel/tools/config/ || true
+
+    echo -e "${INFO} Injecting custom patches into Docker container..."
+    [[ -d "${kernel_patch_path}" ]] && docker cp ${kernel_patch_path}/. "${docker_container}":/opt/kernel/compile-kernel/tools/patch/
+    docker exec -i "${docker_container}" ls -Alh /opt/kernel/compile-kernel/tools/patch/ || true
+
+    echo -e "${INFO} Compiling the kernel inside the Docker container..."
+    docker exec -i "${docker_container}" bash "${docker_script}" "${@}"
+}
+
+# Show welcome message
+echo -e "${STEPS} Welcome to the Kernel Compilation Tool!"
+echo -e "${INFO} The host environment [ ${host_id}: ${host_release} / ${arch_info} ]"
+# Check script permission
+[[ "$(id -u)" == "0" ]] || error_msg "Please run this script as root: [ sudo ./${0} ]"
+
+# Initialize variables
+init_var "${@}"
+# Install Docker engine if it is not installed
+[[ -x "$(command -v docker)" ]] || install_docker_engine
+# Launch the Armbian Docker container
+launch_docker_container
+# Configure the Docker environment and compile the kernel
+configure_and_compile "${@}"
+
+# Show server end information
+echo -e "${STEPS} Host space usage after compilation: \n$(df -hT ${docker_hostpath}) \n"
+echo -e "${SUCCESS} All processes completed successfully."

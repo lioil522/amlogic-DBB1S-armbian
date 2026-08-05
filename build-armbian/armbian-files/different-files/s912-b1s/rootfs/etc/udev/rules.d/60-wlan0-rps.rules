@@ -1,0 +1,14 @@
+# B1S (S912 + BCM43455/SDIO) WiFi 接收分流优化
+#
+# 背景：BCM43455 走 SDIO 总线，其中断固定落在 CPU0，接收软中断跟着挤在同一个核上，
+# 在 ~117 Mbps 处饱和。把 RPS 摊到 CPU1-7 后实测下行 117 -> ~149 Mbps (+27%)。
+#
+# 实测数据（iperf3，5GHz 80MHz，信号 -50dBm）：
+#   优化前：下行 117 / 上行 154 Mbps
+#   优化后：下行 149 / 上行 165 Mbps
+#
+# 逐核采样显示最忙的 CPU0 仍有 47% 空闲，且其开销集中在 sys 态（SDIO 同步传输忙等）
+# 而非 softirq，说明剩余瓶颈是 SDIO 总线往返延迟，非 CPU 算力，锁频无收益。
+#
+# fe = CPU1-7（留出 CPU0 专心处理 SDIO 中断）
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan0", RUN+="/bin/sh -c 'echo fe > /sys/class/net/wlan0/queues/rx-0/rps_cpus; echo 4096 > /sys/class/net/wlan0/queues/rx-0/rps_flow_cnt'"
