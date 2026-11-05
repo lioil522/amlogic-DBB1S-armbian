@@ -71,13 +71,25 @@ python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
 脚本，并以相对符号链接启用遥控和 HDMI 音频服务。只启用、不启动目标服务，
 不对构建主机执行 daemon-reload，不自动切 USB 角色或创建 gadget。
 
-输入镜像必须已有 **ir-keytable、alsa-utils、kmod、systemd**。脚本离线检查
+打包前目标镜像必须已有 **ir-keytable、alsa-utils、kmod、systemd**。脚本离线检查
 目标 dpkg 状态、可执行文件、驱动 Kconfig、模块文件/索引及依赖闭包；
 支持在 x86 上核查 ARM64 rootfs，不 chroot、不执行目标程序。
 缺依赖时明确失败，不能生成“构建成功但遥控/音频/gadget 不可用”的镜像。
 准备基础镜像时可安装 `apt-get install ir-keytable alsa-utils kmod systemd`；
-本次归仓不自动联网安装、不修改当前系统。`CONFIG_USB_MASS_STORAGE` 必须为
+普通本地构建默认不联网安装、不修改当前系统。`CONFIG_USB_MASS_STORAGE` 必须为
 `m`，DWC2 必须支持 peripheral/dual role，拒绝 host-only 和内建自动 gadget。
+
+Release 构建工作流显式设置 Action 输入 `install_b1s_dependencies: "true"`
+（默认 `"false"`），仅对 B1S 在隔离 ARM64 rootfs 中补装缺失包。直接运行
+`rebuild` 时对应显式开关为 `B1S_INSTALL_RUNTIME_PACKAGES=yes`。安装器要求
+root、目标 apt-get；x86 runner 还须启用带 `F` 标志的 `qemu-aarch64` binfmt，
+工作流通过 `qemu-user-static`、`binfmt-support` 和 `update-binfmts` 配置。
+安装器拒绝 live-root/目录符号链接及预挂载 dev/proc，临时用 exit 101 的
+`policy-rc.d` 禁止服务启动，借用主机 DNS，挂载 dev/proc（不挂 sys/boot）。
+成功或失败均恢复原 DNS/策略文件（包括符号链接）并卸载临时挂载；apt 或
+清理失败均终止构建。随后仍执行完整离线依赖、模块和启动文件审计，不跳过检查。
+这是受信任基础镜像的 CI 准备步骤，不是运行不可信 rootfs 的安全沙箱；
+不得对当前盒子、恢复盘或其他正在使用的系统运行安装器。
 
 归仓版脚本对实测配置只做启动等待/安全性调整：红外按驱动查找 rc 编号并重试，
 服务不再 `After=multi-user.target`（避免与默认 Before 形成环）；HDMI 在
@@ -133,7 +145,7 @@ overload 路径、B1S compatible 及根分区 UUID；结果保存为
 python3 tools/b1s/check_boot_files.py /path/to/boot <rootfs-uuid>
 ```
 
-此检查不会执行脚本、修改 U-Boot 环境或写裸设备。27 项离线回归通过；
+此检查不会执行脚本、修改 U-Boot 环境或写裸设备。36 项离线/模拟回归通过；
 仍需用另一测试介质启动验证，不覆盖唯一已验证的恢复盘。
 
 ## 更新策略

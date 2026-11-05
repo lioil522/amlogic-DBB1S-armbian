@@ -67,14 +67,20 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def check(root, config, source):
-    root, source = Path(root).resolve(), Path(source).resolve()
+def installed_packages(root):
+    root = Path(root).resolve()
     packages = {}
     status = rooted(root, "var/lib/dpkg/status").read_text()
     for paragraph in status.split("\n\n"):
         fields = dict(line.split(": ", 1) for line in paragraph.splitlines() if ": " in line and not line.startswith(" "))
-        if fields.get("Package") in PACKAGES and fields.get("Status") == "install ok installed":
+        if fields.get("Package") in PACKAGES and fields.get("Status", "").split()[1:] == ["ok", "installed"]:
             packages[fields["Package"]] = fields.get("Version", "unknown")
+    return packages
+
+
+def check(root, config, source):
+    root, source = Path(root).resolve(), Path(source).resolve()
+    packages = installed_packages(root)
     missing = set(PACKAGES) - packages.keys()
     if missing:
         raise ValueError("Missing installed target packages: " + ", ".join(sorted(missing)) +
@@ -152,10 +158,16 @@ def check(root, config, source):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
-    parser.add_argument("config", type=Path)
-    parser.add_argument("source", type=Path)
+    parser.add_argument("config", type=Path, nargs="?")
+    parser.add_argument("source", type=Path, nargs="?")
+    parser.add_argument("--missing-packages", action="store_true", help="List missing packages only; do not execute or install anything")
     args = parser.parse_args()
     try:
+        if args.missing_packages:
+            print("\n".join(sorted(set(PACKAGES) - installed_packages(args.root).keys())))
+            raise SystemExit(0)
+        if args.config is None or args.source is None:
+            parser.error("config and source are required unless --missing-packages is set")
         report = check(args.root, args.config, args.source)
     except (OSError, ValueError) as exc:
         print(json.dumps({"passed": False, "error": str(exc)}, ensure_ascii=False, indent=2))

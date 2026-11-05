@@ -8,7 +8,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from check_runtime import ASSETS, COMMANDS, MODULES, PACKAGES, SERVICES, check, rooted
+from check_runtime import ASSETS, COMMANDS, MODULES, PACKAGES, SERVICES, check, installed_packages, rooted
 
 ROOT = Path(__file__).resolve().parents[2]
 BOARD = ROOT / "build-armbian/armbian-files/different-files/s912-b1s"
@@ -77,11 +77,14 @@ class RuntimeTests(unittest.TestCase):
             self.assertNotIn("After=multi-user.target", text)
         script = (ROOT / "rebuild").read_text()
         loop = script[script.index("                    refactor_rootfs"):]
+        self.assertLess(loop.index("install-runtime-dependencies.sh"), loop.index("install-runtime.sh"))
+        self.assertIn('${B1S_INSTALL_RUNTIME_PACKAGES:-no}', loop)
         self.assertLess(loop.index("install-runtime.sh"), loop.index("check_boot_files.py"))
         self.assertLess(loop.index("check_boot_files.py"), loop.index("clean_tmp"))
         self.assertIn('cp -af --no-preserve=ownership ${different_rootfs}/. ${tag_rootfs}', script)
         manifest = (BOARD / "install-dtb.sh").read_text()
         self.assertIn("find rootfs -type f", manifest)
+        self.assertIn("install-runtime-dependencies.sh", manifest)
         uenv = ROOT / "build-armbian/armbian-files/platform-files/amlogic/bootfs/uEnv.txt"
         self.assertIn("video=HDMI-A-1:1920x1080@60e", uenv.read_text())
 
@@ -302,6 +305,200 @@ class RuntimeTests(unittest.TestCase):
             result = run("sh", str(script), env=self.env)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(message, result.stderr)
+
+
+class DependencyInstallerTests(unittest.TestCase):
+    """No real apt/chroot/mount: allowlisted tools plus explicitly mocked commands."""
+
+    def setUp(self):
+        self.workspace = tempfile.TemporaryDirectory(prefix="b1s-deps-")
+        self.addCleanup(self.workspace.cleanup)
+        self.work = Path(self.workspace.name)
+        self.root = self.work / "root"
+        for directory in ("etc", "usr/bin", "usr/sbin", "var/lib/dpkg", "dev", "proc"):
+            (self.root / directory).mkdir(parents=True, exist_ok=True)
+        self.status = self.root / "var/lib/dpkg/status"
+        self.status.write_text("".join(f"Package: {name}\nStatus: install ok installed\nVersion: 1-test\n\n"
+                                       for name in PACKAGES if name != "ir-keytable"))
+        apt = self.root / "usr/bin/apt-get"
+        apt.write_text("must never execute target programs in tests\n")
+        apt.chmod(0o755)
+        self.dns = self.root / "etc/resolv.conf"
+        self.policy = self.root / "usr/sbin/policy-rc.d"
+        self.dns.write_text("original DNS\n")
+        self.policy.write_text("#!/bin/sh\nexit 0\n")
+        self.policy.chmod(0o750)
+        self.log = self.work / "calls.log"
+        self.registration = self.work / "qemu-aarch64"
+        self.registration.write_text("enabled\nflags: POCF\n")
+        self.host_dns = self.work / "host-dns"
+        self.host_dns.write_text("nameserver 192.0.2.1\n")
+        self.script = self.work / "installer.sh"
+        text = (BOARD / "install-runtime-dependencies.sh").read_text()
+        text = text.replace('repo_dir="$(cd -- "${board_dir}/../../../.." && pwd)"', f'repo_dir="{ROOT}"')
+        text = text.replace("/proc/sys/fs/binfmt_misc/qemu-aarch64", str(self.registration))
+        text = text.replace("cp -L -- /etc/resolv.conf", f'cp -L -- "{self.host_dns}"')
+        self.script.write_text(text)
+        tools = self.work / "tools"
+        tools.mkdir()
+        # A missing mock cannot fall through to host mount/chroot/apt.
+        for command in ("python3", "dirname", "realpath", "grep", "mktemp", "mkdir", "mv", "rm", "cp", "chmod", "rmdir"):
+            (tools / command).symlink_to(shutil.which(command))
+        self.env = {**os.environ, "PATH": str(tools), "CALL_LOG": str(self.log),
+                    "MOCK_UID": "0", "MOCK_ARCH": "x86_64", "FAIL_AT": ""}
+        self.bash = shutil.which("bash")
+        for command, body in {
+            "id": 'echo "${MOCK_UID}"',
+            "uname": 'echo "${MOCK_ARCH}"',
+            "mountpoint": '[ "${FAIL_AT}" = premounted ]',
+            "mount": 'printf "mount %s\\n" "$*" >>"$CALL_LOG"\n'
+                     'case "$*" in\n--bind*) [ "$FAIL_AT" != mount-dev ] ;;\n'
+                     '--make-private*) [ "$FAIL_AT" != private-dev ] ;;\n'
+                     '*) [ "$FAIL_AT" != mount-proc ] ;;\nesac',
+            "umount": 'printf "umount %s\\n" "$*" >>"$CALL_LOG"\n[ "$FAIL_AT" != umount ]',
+            "chroot": 'python3 - "$@" <<\'PY\'\n'
+                      'import os, sys\nfrom pathlib import Path\n'
+                      'root = Path(sys.argv[1]); args = sys.argv[2:]\n'
+                      'assert (root / "usr/sbin/policy-rc.d").read_text() == "#!/bin/sh\\nexit 101\\n"\n'
+                      'assert (root / "usr/sbin/policy-rc.d").stat().st_mode & 0o777 == 0o755\n'
+                      'assert (root / "etc/resolv.conf").read_text() == "nameserver 192.0.2.1\\n"\n'
+                      'with open(os.environ["CALL_LOG"], "a") as stream: stream.write("chroot " + " ".join(args) + "\\n")\n'
+                      'stage = "update" if args[-1] == "update" else "install"\n'
+                      'if os.environ["FAIL_AT"] == stage: sys.exit(42)\n'
+                      'if stage == "install":\n'
+                      '    assert args[args.index("install") + 1:] == ["ir-keytable"]\n'
+                      '    if os.environ["FAIL_AT"] != "still-missing":\n'
+                      '        with (root / "var/lib/dpkg/status").open("a") as stream:\n'
+                      '            stream.write("Package: ir-keytable\\nStatus: install ok installed\\nVersion: 2-test\\n\\n")\n'
+                      'PY',
+        }.items():
+            path = tools / command
+            path.write_text(f"#!{self.bash}\n" + body + "\n")
+            path.chmod(0o755)
+
+    def install(self, **env):
+        return run(self.bash, str(self.script), str(self.root), env={**self.env, **env})
+
+    def assert_restored(self):
+        self.assertEqual(self.dns.read_text(), "original DNS\n")
+        self.assertEqual(self.policy.read_text(), "#!/bin/sh\nexit 0\n")
+        self.assertEqual(self.policy.stat().st_mode & 0o777, 0o750)
+        self.assertFalse(list(self.work.glob(".b1s-deps.*")))
+
+    def test_missing_packages_and_held_installed_offline_query(self):
+        self.status.write_text(self.status.read_text().replace("install ok installed", "hold ok installed"))
+        self.assertEqual(set(installed_packages(self.root)), set(PACKAGES) - {"ir-keytable"})
+        result = run("python3", str(ROOT / "tools/b1s/check_runtime.py"), "--missing-packages", str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ir-keytable\n")
+        self.status.write_text(self.status.read_text().replace("hold ok installed", "install ok unpacked"))
+        self.assertEqual(installed_packages(self.root), {})
+
+    def test_install_missing_only_and_restore(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(set(installed_packages(self.root)), set(PACKAGES))
+        calls = self.log.read_text().splitlines()
+        self.assertEqual(sum(line.startswith("chroot ") for line in calls), 2)
+        self.assertTrue(calls[-2].endswith("/proc"))
+        self.assertTrue(calls[-1].endswith("/dev"))
+        self.assertNotIn("/sys", self.log.read_text())
+        self.assert_restored()
+
+    def test_already_installed_needs_no_root_binfmt_or_chroot(self):
+        with self.status.open("a") as stream:
+            stream.write("Package: ir-keytable\nStatus: hold ok installed\nVersion: 2-test\n\n")
+        self.registration.unlink()
+        (self.root / "usr/bin/apt-get").unlink()
+        result = self.install(MOCK_UID="1000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no chroot needed", result.stdout)
+        self.assertFalse(self.log.exists())
+        self.assert_restored()
+
+    def test_apt_and_mount_failures_restore(self):
+        for failure, unmounts in (("update", 2), ("install", 2), ("still-missing", 2),
+                                  ("mount-dev", 0), ("private-dev", 1), ("mount-proc", 1), ("umount", 2)):
+            with self.subTest(failure=failure):
+                if self.log.exists():
+                    self.log.unlink()
+                original = self.status.read_text()
+                result = self.install(FAIL_AT=failure)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(sum(line.startswith("umount ") for line in self.log.read_text().splitlines()), unmounts)
+                self.assert_restored()
+                self.status.write_text(original)
+
+    def test_dns_copy_failure_restores_without_mounting(self):
+        self.host_dns.unlink()
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.log.exists())
+        self.assert_restored()
+
+    def test_symlink_and_absent_leaf_files_preserved(self):
+        self.dns.unlink()
+        self.policy.unlink()
+        self.dns.symlink_to("/run/systemd/resolve/stub-resolv.conf")
+        self.policy.symlink_to("../../lib/policy-original")
+        for failure in ("install", ""):
+            result = self.install(FAIL_AT=failure)
+            self.assertEqual(result.returncode == 0, not failure, result.stdout + result.stderr)
+            self.assertEqual(str(self.dns.readlink()), "/run/systemd/resolve/stub-resolv.conf")
+            self.assertEqual(str(self.policy.readlink()), "../../lib/policy-original")
+            self.assertFalse(list(self.work.glob(".b1s-deps.*")))
+        self.dns.unlink()
+        self.policy.unlink()
+        self.status.write_text(self.status.read_text().split("Package: ir-keytable")[0])
+        self.assertEqual(self.install().returncode, 0)
+        self.assertFalse(self.dns.exists())
+        self.assertFalse(self.policy.exists())
+
+    def test_binfmt_privilege_mount_and_live_path_guards(self):
+        self.registration.unlink()
+        self.assertIn("binfmt", self.install().stderr)
+        for content in ("", "disabled\nflags: F\n", "enabled\nflags: OC\n"):
+            self.registration.write_text(content)
+            result = self.install()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("binfmt", result.stderr)
+            self.assertFalse(self.log.exists())
+        self.registration.write_text("enabled\nflags: F\n")
+        self.assertIn("requires root", self.install(MOCK_UID="1000").stderr)
+        self.assertIn("pre-mounted", self.install(FAIL_AT="premounted").stderr)
+        for root in ("/", "/root", "/etc", "/usr", "/boot", "/var"):
+            result = run(self.bash, str(self.script), root, env=self.env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("refuses live", result.stderr)
+        link = self.work / "live-root-link"
+        link.symlink_to("/")
+        self.assertIn("refuses live", run(self.bash, str(self.script), str(link), env=self.env).stderr)
+        (self.root / "dev").rmdir()
+        (self.root / "dev").symlink_to("/dev")
+        self.assertIn("Unsafe staged", self.install().stderr)
+        self.assertFalse(self.log.exists())
+        self.assert_restored()
+
+    def test_native_arm64_and_missing_target_apt(self):
+        apt = self.root / "usr/bin/apt-get"
+        apt.chmod(0o644)
+        self.assertIn("apt-get is missing", self.install().stderr)
+        self.assertFalse(self.log.exists())
+        apt.chmod(0o755)
+        self.registration.unlink()
+        result = self.install(MOCK_ARCH="aarch64")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_restored()
+
+    def test_ci_opt_in_and_offline_defaults(self):
+        import yaml
+        action = yaml.safe_load((ROOT / "action.yml").read_text())
+        self.assertEqual(action["inputs"]["install_b1s_dependencies"]["default"], "false")
+        self.assertIn('B1S_INSTALL_RUNTIME_PACKAGES="${b1s_install_packages}"', (ROOT / "action.yml").read_text())
+        workflow = (ROOT / ".github/workflows/build-armbian-using-releases-files.yml").read_text()
+        self.assertIn('install_b1s_dependencies: "true"', workflow)
+        self.assertIn("install qemu-user-static binfmt-support", workflow)
+        self.assertIn("update-binfmts --enable qemu-aarch64", workflow)
 
 
 if __name__ == "__main__":

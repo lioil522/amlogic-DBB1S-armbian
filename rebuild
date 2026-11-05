@@ -1450,6 +1450,9 @@ loop_rebuild() {
                     refactor_bootfs
                     refactor_rootfs
                     if [[ "${board}" == s912-b1s ]]; then
+                        if [[ "${B1S_INSTALL_RUNTIME_PACKAGES:-no}" == yes ]]; then
+                            bash "${different_files}/${board}/install-runtime-dependencies.sh" "${tag_rootfs}" || error_msg "B1S target package installation failed."
+                        fi
                         bash "${different_files}/${board}/install-runtime.sh" "${tag_rootfs}" "${tag_bootfs}" "${kernel_name}" || error_msg "B1S runtime assets/dependencies audit failed."
                         python3 "${current_path}/tools/b1s/check_boot_files.py" "${tag_bootfs}" "${ROOTFS_UUID}" >"${tag_bootfs}/b1s-boot-audit.json" || error_msg "B1S boot file/UUID audit failed; see b1s-boot-audit.json."
                     fi

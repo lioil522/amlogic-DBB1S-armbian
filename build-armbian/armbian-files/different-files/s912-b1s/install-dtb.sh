@@ -20,7 +20,7 @@ mkdir -p "${manifest_dir}"
     cd "${board_dir}"
     find dts -type f -print0 | sort -z | xargs -0 sha256sum
     find rootfs -type f -print0 | sort -z | xargs -0 sha256sum
-    sha256sum build-dtb.sh check-kernel-config.sh install-dtb.sh install-runtime.sh
+    sha256sum build-dtb.sh check-kernel-config.sh install-dtb.sh install-runtime.sh install-runtime-dependencies.sh
     sha256sum ../../../../tools/b1s/check_runtime.py
 } >"${manifest_dir}/build-manifest.txt"
 cp "${manifest_dir}/build-manifest.txt" "${bootfs}/b1s-build-manifest.txt"

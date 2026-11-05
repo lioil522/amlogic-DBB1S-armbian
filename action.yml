@@ -20,6 +20,10 @@ inputs:
     description: "Expected image edition: auto / server / desktop"
     required: false
     default: "auto"
+  install_b1s_dependencies:
+    description: "Install missing packages in staged B1S rootfs (requires ARM64 execution/binfmt); default is offline audit only"
+    required: false
+    default: "false"
   kernel_repo:
     description: "Set kernel repository."
     required: false
@@ -234,7 +238,13 @@ runs:
             [[ -n "${{ inputs.armbian_size }}"    ]] && make_args+=(-s "${{ inputs.armbian_size }}")
             make_args+=(-e "${{ inputs.armbian_edition }}")
             [[ -n "${builder_name}"               ]] && make_args+=(-n "${builder_name}")
-            sudo env ARMBIAN_INPUT_DIR="${armbian_filepath}" ARMBIAN_OUTPUT_DIR="${armbian_outputpath}" ./rebuild "${make_args[@]}"
+            b1s_install_packages=no
+            case "${{ inputs.install_b1s_dependencies }}" in
+                true) b1s_install_packages=yes ;;
+                false|"") ;;
+                *) echo "Invalid install_b1s_dependencies input"; exit 1 ;;
+            esac
+            sudo env ARMBIAN_INPUT_DIR="${armbian_filepath}" ARMBIAN_OUTPUT_DIR="${armbian_outputpath}" B1S_INSTALL_RUNTIME_PACKAGES="${b1s_install_packages}" ./rebuild "${make_args[@]}"
             # rebuild already compressed and checked the exact current-run artifacts.
             python3 tools/verify-armbian-output.py "${armbian_outputpath}"
 
