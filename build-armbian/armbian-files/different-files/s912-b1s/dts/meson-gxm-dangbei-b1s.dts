@@ -1,0 +1,9 @@
+/dts-v1/;
+
+// The recovered baseline is pinned to the known-bootable B1S DTB.
+/include/ "meson-gxm-dangbei-b1s-baseline.dtsi"
+/include/ "fixes/power-key.dtsi"
+/include/ "fixes/gpu-cooling.dtsi"
+/include/ "fixes/hdmi-active-low.dtsi"
+/include/ "fixes/no-adc-keys.dtsi"
+/include/ "fixes/usb-vbus.dtsi"

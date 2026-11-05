@@ -1,0 +1,42 @@
+From 0287c960b15f27498d85cadf584bb59301ea2382 Mon Sep 17 00:00:00 2001
+From: Geert Uytterhoeven <geert+renesas@glider.be>
+Date: Tue, 30 Dec 2025 16:04:05 +0100
+Subject: [PATCH] phy: core: Reinstate pm_runtime_enabled() check in
+ phy_pm_runtime_put()
+
+Upstream: https://github.com/torvalds/linux/commit/0287c960b15f27498d85cadf584bb59301ea2382
+
+On Koelsch (R-Car M2-W), during boot and s2ram:
+
+    phy phy-e6590100.usb-phy-controller.0: Runtime PM usage count underflow!
+
+While phy_pm_runtime_get{,_sync}() and phy_pm_runtime_put_sync() still
+contain pm_runtime_enabled() checks, the same check in
+phy_pm_runtime_put() was deemed redundant and removed, causing count
+underflows with PHY drivers like drivers/phy/renesas/phy-rcar-gen2.c
+that do not use Runtime PM yet,
+
+Fix this by reinstating the check.
+
+Fixes: caad07ae07e3fb17 ("phy: core: Discard pm_runtime_put() return values")
+Signed-off-by: Geert Uytterhoeven <geert+renesas@glider.be>
+Reviewed-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Link: https://patch.msgid.link/3ca9f8166d21685bfbf97535da30172f74822130.1767107014.git.geert+renesas@glider.be
+Signed-off-by: Vinod Koul <vkoul@kernel.org>
+---
+ drivers/phy/phy-core.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/phy/phy-core.c b/drivers/phy/phy-core.c
+--- a/drivers/phy/phy-core.c
++++ b/drivers/phy/phy-core.c
+@@ -195,6 +195,9 @@ void phy_pm_runtime_put(struct phy *phy)
+ 	if (!phy)
+ 		return;
+ 
++	if (!pm_runtime_enabled(&phy->dev))
++		return;
++
+ 	pm_runtime_put(&phy->dev);
+ }
+ EXPORT_SYMBOL_GPL(phy_pm_runtime_put);

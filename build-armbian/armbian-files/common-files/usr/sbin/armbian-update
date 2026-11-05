@@ -622,6 +622,16 @@ backup_kernel() {
 }
 
 backup_fdtfile() {
+    # B1S keeps the selected/calibrated DTB even when a new kernel ships the
+    # same filename. Keep board snapshots outside generic kernel pruning.
+    b1s_asset_backup=""
+    if [[ "${FDTFILE}" == meson-gxm-dangbei-b1s*.dtb ]]; then
+        local helper="/usr/lib/b1s/preserve-assets.sh"
+        [[ -f "${helper}" ]] || error_msg "B1S board files are incomplete: missing ${helper}"
+        mkdir -p /ddbr/b1s-assets || error_msg "Cannot create B1S snapshot directory."
+        b1s_asset_backup="/ddbr/b1s-assets/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        bash "${helper}" save /boot /usr/lib/firmware/brcm "${b1s_asset_backup}" "${FDTFILE}" || error_msg "Cannot snapshot B1S assets."
+    fi
     # Check if the dtb backup directory exists, if not, create it
     [[ -d "${backup_path}/dtb" ]] || mkdir -p ${backup_path}/dtb
 
@@ -634,6 +644,12 @@ backup_fdtfile() {
 }
 
 restore_fdtfile() {
+    if [[ -n "${b1s_asset_backup:-}" ]]; then
+        bash /usr/lib/b1s/preserve-assets.sh restore /boot /usr/lib/firmware/brcm "${b1s_asset_backup}" "${FDTFILE}" || error_msg "Cannot restore B1S assets."
+        bash /usr/lib/b1s/refresh-initrd.sh "${kernel_base}-${kernel_signature}" || error_msg "Cannot refresh B1S initrd firmware."
+        echo -e "${INFO} B1S selected DTB and firmware restored; snapshot: ${b1s_asset_backup}"
+        return 0
+    fi
     # Restore the DTB file if the backup exists and the current one is missing
     if [[ -f "${backup_path}/dtb/${FDTFILE}" && ! -f "/boot/dtb/${PLATFORM}/${FDTFILE}" ]]; then
         cp -f ${backup_path}/dtb/${FDTFILE} /boot/dtb/${PLATFORM}/

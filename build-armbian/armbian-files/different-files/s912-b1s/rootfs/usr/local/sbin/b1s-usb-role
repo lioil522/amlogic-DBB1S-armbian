@@ -1,0 +1,80 @@
+#!/bin/sh
+# B1S original USB-A: PHY1/OTG. Added USB-A: host-only.
+# Default is host. This tool never loads a gadget or exports a disk.
+# Known issue: role switching can disrupt xHCI, including the added host port.
+# Recovery is explicit, affects both host ports, and is not a root-cause fix.
+set -eu
+ROLE=/sys/class/usb_role/d0078080.usb-role-switch/role
+DRV=/sys/bus/platform/drivers/dwc2
+DEV=c9100000.usb
+XDRV=/sys/bus/platform/drivers/dwc3
+XDEV=c9000000.usb
+fail() { echo "b1s-usb-role: $*" >&2; exit 1; }
+usage() {
+    echo "usage: $0 status | {device|host} --confirm-disconnected [--recover-xhci (host only)]" >&2
+    exit 2
+}
+mode=${1:-status}
+[ "$#" -eq 0 ] || shift
+confirmed=no
+recover=no
+for arg in "$@"; do
+    case "$arg" in
+        --confirm-disconnected) confirmed=yes ;;
+        --recover-xhci) recover=yes ;;
+        *) usage ;;
+    esac
+done
+case "$mode" in status|host|device) ;; *) usage ;; esac
+[ "$mode" = host ] || [ "$recover" = no ] || usage
+[ -r "$ROLE" ] || fail 'USB role switch not found'
+if [ "$mode" = status ]; then
+    echo "role=$(cat "$ROLE")"
+    printf 'udc='
+    for d in /sys/class/udc/*; do [ ! -e "$d" ] || printf '%s ' "$(basename "$d")"; done
+    printf '\n'
+    exit 0
+fi
+[ "$(id -u)" -eq 0 ] || fail 'run as root'
+[ "$confirmed" = yes ] || fail 'disconnect A-A cable and USB peripherals first; then pass --confirm-disconnected'
+# Refuse with any storage still attached to this controller (mounted, swap or
+# root devices are all covered). xHCI disruption may affect either physical port.
+for d in /sys/class/block/*; do
+    case "$(readlink -f "$d")" in
+        *d0078080.usb*) fail 'USB storage is attached; unmount/swapoff and unplug it first' ;;
+    esac
+done
+# A loaded legacy gadget could auto-bind as soon as a UDC appears.
+for d in /sys/module/g_*; do
+    [ ! -d "$d" ] || fail "unload $(basename "$d") before changing roles"
+done
+# Never unbind a gadget while its files may still be in use by the PC.
+for d in /sys/class/udc/*; do
+    if [ -r "$d/function" ] && [ -n "$(cat "$d/function")" ]; then
+        fail 'gadget is bound; eject on PC, unplug A-A, unload gadget first'
+    fi
+done
+if [ "$mode" = device ]; then
+    echo device >"$ROLE"
+    if [ ! -e "/sys/class/udc/$DEV" ]; then
+        echo "$DEV" >"$DRV/bind" || fail 'DWC2 bind failed; role remains device (see dmesg)'
+    fi
+    attempt=0
+    while [ "$attempt" -lt 20 ]; do
+        [ ! -e "/sys/class/udc/$DEV" ] || break
+        attempt=$((attempt + 1))
+        sleep 0.1
+    done
+    [ -e "/sys/class/udc/$DEV" ] || fail "UDC $DEV did not appear; role remains device"
+    echo "USB role=device, UDC=$DEV; load gadget manually, then connect PC to original port"
+else
+    if [ -e "/sys/class/udc/$DEV" ]; then
+        echo "$DEV" >"$DRV/unbind" || fail 'DWC2 unbind failed; refusing host switch'
+    fi
+    echo host >"$ROLE"
+    if [ "$recover" = yes ]; then
+        echo "$XDEV" >"$XDRV/unbind" || fail 'xHCI recovery: DWC3 unbind failed'
+        echo "$XDEV" >"$XDRV/bind" || fail 'xHCI recovery: DWC3 bind failed'
+    fi
+    echo 'USB role=host; if ports remain unavailable, use explicit --recover-xhci with both ports unplugged'
+fi

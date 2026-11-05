@@ -1,0 +1,23 @@
+# 当贝 B1S 红外遥控器 keymap
+# 协议: NEC extended (necx), custom code = 0x8102
+# scancode 格式: custom_code << 8 | key_code
+# 0x8102ff 为松手释放帧，故意不映射，避免产生多余按键事件
+
+[[protocols]]
+name = "b1s"
+protocol = "nec"
+variant = "necx"
+
+[protocols.scancodes]
+0x810201 = "KEY_POWER"
+0x810202 = "KEY_VOICECOMMAND"
+0x810203 = "KEY_UP"
+0x810204 = "KEY_LEFT"
+0x810205 = "KEY_OK"
+0x810206 = "KEY_RIGHT"
+0x810207 = "KEY_DOWN"
+0x810208 = "KEY_BACK"
+0x810209 = "KEY_HOME"
+0x81020a = "KEY_MENU"
+0x81020b = "KEY_VOLUMEUP"
+0x81020c = "KEY_VOLUMEDOWN"

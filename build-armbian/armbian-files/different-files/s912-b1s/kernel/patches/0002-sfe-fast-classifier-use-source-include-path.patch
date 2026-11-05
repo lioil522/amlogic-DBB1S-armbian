@@ -1,0 +1,19 @@
+From: B1S local adaptation
+Subject: [PATCH] net: sfe: use source path for fast-classifier headers
+
+The ophub SFE fast-classifier Makefile uses $(obj) to find its sibling
+shortcut-fe headers. With an O= build this points into the output tree,
+where sfe_backport.h, sfe.h and sfe_cm.h do not exist. Resolve the include
+directory using $(src), which already contains $(srcroot) in this kernel's
+scripts/Makefile.build. This is a local build fix, not an
+upstream Linux commit, and does not change the enabled SFE configuration.
+
+--- a/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile
++++ b/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile
+@@ -7,5 +7,5 @@ ifeq ($(CONFIG_SFE_SUPPORT_IPV6),y)
+     ccflags-$(CONFIG_SFE_SUPPORT_IPV6) += -DSFE_SUPPORT_IPV6
+ endif
+ 
+-ccflags-y += -I$(obj)/../shortcut-fe
++ccflags-y += -I$(src)/../shortcut-fe
+ ccflags-y += -Werror -Wall -Wno-unused-but-set-parameter

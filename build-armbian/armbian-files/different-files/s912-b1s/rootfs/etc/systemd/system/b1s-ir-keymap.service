@@ -1,0 +1,12 @@
+[Unit]
+Description=Load Dangbei B1S IR remote keymap
+After=systemd-udev-trigger.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/b1s-ir-keymap.sh
+TimeoutStartSec=15s
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

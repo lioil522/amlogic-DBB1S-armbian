@@ -395,18 +395,13 @@ jobs:
           ln -sf /builder/build ${{ github.workspace }}/build
 
           # Query the latest release asset via GitHub API
-          latest_version=$(curl -s \
+          latest_version=$(curl -fsSL \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               https://api.github.com/repos/${{ github.repository }}/releases?per_page=20 | \
-              jq -r --arg RTK "Armbian_${{ matrix.release }}_arm64_" \
-              --arg BOARD "-trunk_" \
-              '[.[] | select(.tag_name | contains($RTK))] |
-              map(.assets[] | select(.name | contains($BOARD) and endswith(".img.gz"))) |
-              sort_by(.updated_at) |
-              reverse |
-              .[0] |
-              {data: .updated_at, url: .url, name: .name}')
+              jq -er --arg release "${{ matrix.release }}" \
+              --arg edition "${{ inputs.armbian_edition }}" \
+              -f "${{ github.workspace }}/tools/select-armbian-release.jq")
 
           [[ -z "${latest_version}" || "${latest_version}" == "null" ]] && {
               echo "Error: Failed to resolve Armbian image download URL."
@@ -418,7 +413,7 @@ jobs:
           armbian_filename="$(echo ${latest_version} | jq -r '.name')"
 
           # Download asset via GitHub API (binary stream)
-          echo "Downloading: ${armbian_filename}"
+          echo "Selected ${{ matrix.release }} / ${{ inputs.armbian_edition }}: ${armbian_filename}"
           curl -fsSL \
                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                -H "Accept: application/octet-stream" \
@@ -439,6 +434,7 @@ jobs:
           build_target: armbian
           armbian_path: build/output/images/*.img
           armbian_board: ${{ inputs.armbian_board }}
+          armbian_edition: ${{ inputs.armbian_edition }}
           armbian_kernel: ${{ inputs.armbian_kernel }}
           auto_kernel: ${{ inputs.auto_kernel }}
           kernel_repo: ${{ inputs.kernel_repo }}

@@ -1,0 +1,21 @@
+{
+  "source_repository": "https://github.com/ophub/linux-6.18.y.git",
+  "source_commit": "e0497a975383cedc8b8d8a7c9e84eac2e2238a6e",
+  "source_status": "reference commit; complete running-kernel provenance not established",
+  "base_config": "config-6.18.48-ophub",
+  "base_config_sha256": "e898219f6d907ce0b37c06d0fc6490c44fc2172094fac4bc0efc98a5e852b440",
+  "running_compiler": "Arm GNU Toolchain 15.3.Rel1 (Build arm-15.149), GCC 15.3.1 20260627",
+  "patches": [
+    {
+      "file": "patches/0001-phy-core-reinstate-runtime-pm-check.patch",
+      "upstream_commit": "0287c960b15f27498d85cadf584bb59301ea2382",
+      "sha256": "6448a024c650775c6fff78e5c6da29d0a2eae86412f2d61b6576ebae9bd8d556"
+    },
+    {
+      "file": "patches/0002-sfe-fast-classifier-use-source-include-path.patch",
+      "origin": "local build fix for the pinned ophub source; not an upstream Linux commit",
+      "reason": "SFE fast-classifier sibling headers must use src instead of obj in an O= build",
+      "sha256": "5e3604d60cf029f0e8a0925341e0e2e2977c4404f09cf630c1e485489c5482b0"
+    }
+  ]
+}

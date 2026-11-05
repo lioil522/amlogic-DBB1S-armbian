@@ -1,0 +1,19 @@
+// GPIOAO_2 is active low. The factory driver also polls at 20 ms.
+&{/gpio-keys} {
+	compatible = "gpio-keys-polled";
+	poll-interval = <20>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&b1s_power_key_pins>;
+};
+
+&pinctrl_aobus {
+	b1s_power_key_pins: power-key-pins {
+		mux {
+			groups = "GPIOAO_2";
+			function = "gpio_aobus";
+			bias-pull-up;
+			// gpiod_get(..., GPIOD_IN) sets direction in gpio_keys_polled.
+			// This Meson driver does not support PIN_CONFIG_INPUT_ENABLE.
+		};
+	};
+};

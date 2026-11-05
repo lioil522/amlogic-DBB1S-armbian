@@ -16,6 +16,10 @@ inputs:
     description: "Set device Board."
     required: false
     default: "all"
+  armbian_edition:
+    description: "Expected image edition: auto / server / desktop"
+    required: false
+    default: "auto"
   kernel_repo:
     description: "Set kernel repository."
     required: false
@@ -135,31 +139,33 @@ runs:
 
             armbian_file="${{ inputs.armbian_path }}"
             armbian_filename="${armbian_file##*/}"
-            armbian_filepath="build/output/images"
+            echo "PACKAGED_STATUS=failure" >> "${GITHUB_ENV}"
+            mkdir -p build/input build/output/rebuilt
+            armbian_filepath="$(mktemp -d "${PWD}/build/input/run.XXXXXX")"
+            armbian_outputpath="$(mktemp -d "${PWD}/build/output/rebuilt/run.XXXXXX")"
             echo -e "Armbian file input parameters: [ ${armbian_file} ]"
             [[ -z "${armbian_file}" ]] && echo -e "The [ armbian_path ] variable must be specified." && exit 1
-            [[ -d "${armbian_filepath}" ]] || mkdir -p ${armbian_filepath}
             if [[ "${armbian_file}" =~ ^http ]]; then
                 echo -e "Downloading file: [ ${armbian_file} ]"
                 curl -fsSL "${armbian_file}" -o "${armbian_filepath}/${armbian_filename}"
             else
-                if [[ -z "$(ls ${armbian_filepath}/${armbian_filename} 2>/dev/null)" ]]; then
-                    echo -e "Copying files: [ ${armbian_file} ]"
-                    if [[ "${armbian_file}" =~ ^/ ]]; then
-                        cp -vf ${armbian_file} -t ${armbian_filepath}/ || true
-                    else
-                        cp -vf ${{ github.workspace }}/${armbian_file} -t ${armbian_filepath}/ || true
-                    fi
-                else
-                    echo -e "File [ ${armbian_filepath}/${armbian_filename} ] already exists, skipping."
-                fi
+                [[ "${armbian_file}" == /* ]] || armbian_file="${{ github.workspace }}/${armbian_file}"
+                mapfile -t input_files < <(compgen -G "${armbian_file}")
+                [[ "${#input_files[@]}" -eq 1 && -f "${input_files[0]}" ]] || {
+                    echo "Error: armbian_path must match exactly one input image."
+                    exit 1
+                }
+                cp -v -- "${input_files[0]}" "${armbian_filepath}/"
             fi
             sync
             echo -e "Contents of [ ${armbian_filepath} ] directory: \n$(ls -lh ${armbian_filepath} 2>/dev/null)"
 
             cd ${armbian_filepath}
             echo -e "Checking the Armbian file format..."
-            down_file="$(ls -l *.img* 2>/dev/null | grep "^-" | awk '{print $9}' | sort -u | head -n 1)"
+            shopt -s nullglob
+            downloaded=( * )
+            [[ "${#downloaded[@]}" -eq 1 ]] || { echo "Error: ambiguous input files"; exit 1; }
+            down_file="${downloaded[0]}"
             if [[ -n "${down_file}" ]]; then
                 echo -e "Selected Armbian file: [ ${down_file} ]"
             else
@@ -168,14 +174,19 @@ runs:
             fi
             # Decompress the Armbian image file.
             case "${down_file}" in
-                *.img.gz) gzip -df "${down_file}" 2>/dev/null && sync ;;
-                *.img.xz) xz -d "${down_file}" 2>/dev/null && sync ;;
-                *.zip)    unzip -o "${down_file}" 2>/dev/null && sync ;;
+                *.img.gz) gzip -df -- "${down_file}" || exit 1 ;;
+                *.img.xz) xz -d -- "${down_file}" || exit 1 ;;
+                *.zip)    unzip -o "${down_file}" || exit 1 ;;
+                *.img)    ;;
+                *)        echo "Unsupported input image format: ${down_file}"; exit 1 ;;
             esac
             echo -e "Armbian file: \n$(ls -lh *.img 2>/dev/null)"
 
             echo -e "Checking the Armbian filename (-trunk_)..."
-            image_file="$(ls *.img 2>/dev/null | head -n 1)"
+            images=( *.img )
+            shopt -u nullglob
+            [[ "${#images[@]}" -eq 1 && -s "${images[0]}" ]] || { echo "Error: expected one unpacked .img"; exit 1; }
+            image_file="${images[0]}"
             if [[ "${image_file}" =~ "-trunk_" ]]; then
                 echo -e "The Armbian filename is correct."
             else
@@ -188,8 +199,8 @@ runs:
                 image_codename="$(echo ${image_file} | grep -oE "(trixie|bookworm|bullseye|resolute|noble|jammy)" || echo '')"
                 # Rename armbian image file
                 image_save_name="Armbian_${image_version}-trunk_${image_codename}_arm64_${image_kernel}.img"
-                rm -f ${image_save_name}
-                mv -f ${image_file} ${image_save_name}
+                [[ -n "${image_version}" && -n "${image_kernel}" && -n "${image_codename}" ]] || { echo "Error: cannot identify input image"; exit 1; }
+                mv -- "${image_file}" "${image_save_name}"
                 echo -e "Renamed Armbian file: [ ${image_save_name} ]"
             fi
 
@@ -199,7 +210,7 @@ runs:
                 copy_from_path="${{ inputs.armbian_files }}"
                 copy_from_path="${copy_from_path%/}"
                 [[ "${copy_from_path}" != /* ]] && copy_from_path="${{ github.workspace }}/${copy_from_path}"
-                copy_to_path="build-armbian/armbian-files/common-files"
+                copy_to_path="${{ github.action_path }}/build-armbian/armbian-files/common-files"
                 cp -avf --no-preserve=ownership "${copy_from_path}/." -t "${copy_to_path}/" || true
             else
                 echo -e "Using the default Armbian rebuild files."
@@ -221,36 +232,21 @@ runs:
             [[ -n "${{ inputs.auto_kernel }}"     ]] && make_args+=(-a "${{ inputs.auto_kernel }}")
             [[ -n "${{ inputs.armbian_fstype }}"  ]] && make_args+=(-t "${{ inputs.armbian_fstype }}")
             [[ -n "${{ inputs.armbian_size }}"    ]] && make_args+=(-s "${{ inputs.armbian_size }}")
+            make_args+=(-e "${{ inputs.armbian_edition }}")
             [[ -n "${builder_name}"               ]] && make_args+=(-n "${builder_name}")
-            sudo ./rebuild "${make_args[@]}"
-
-            cd ${{ github.action_path }}/${armbian_filepath}
-            # Compress Armbian image file. Guard against an empty glob (no .img produced) and
-            # prefer pigz when present, otherwise fall back to gzip.
-            shopt -s nullglob
-            imgs=( *.img )
-            shopt -u nullglob
-            if [[ "${#imgs[@]}" -eq 0 ]]; then
-                echo "error: No .img file produced in [ ${PWD} ], aborting."
-                echo "PACKAGED_STATUS=failure" >> ${GITHUB_ENV}
-                exit 1
-            fi
-            if command -v pigz >/dev/null 2>&1; then
-                pigz -qf "${imgs[@]}"
-            else
-                gzip -qf "${imgs[@]}"
-            fi
-            sync && sleep 3
+            sudo env ARMBIAN_INPUT_DIR="${armbian_filepath}" ARMBIAN_OUTPUT_DIR="${armbian_outputpath}" ./rebuild "${make_args[@]}"
+            # rebuild already compressed and checked the exact current-run artifacts.
+            python3 tools/verify-armbian-output.py "${armbian_outputpath}"
 
             cd ${{ github.action_path }}
             echo -e "Output environment variables."
-            echo "PACKAGED_OUTPUTPATH=${PWD}/${armbian_filepath}" >> ${GITHUB_ENV}
+            echo "PACKAGED_OUTPUTPATH=${armbian_outputpath}" >> ${GITHUB_ENV}
             echo "PACKAGED_OUTPUTDATE=$(date +"%m.%d.%H%M")" >> ${GITHUB_ENV}
             echo "PACKAGED_STATUS=success" >> ${GITHUB_ENV}
-            echo -e "PACKAGED_OUTPUTPATH: ${PWD}/${armbian_filepath}"
+            echo -e "PACKAGED_OUTPUTPATH: ${armbian_outputpath}"
             echo -e "PACKAGED_OUTPUTDATE: $(date +"%m.%d.%H%M")"
             echo -e "PACKAGED_STATUS: success"
-            echo -e "PACKAGED_OUTPUTPATH files list: \n$(ls -lh ${PWD}/${armbian_filepath}/ 2>/dev/null)"
+            echo -e "PACKAGED_OUTPUTPATH files list: \n$(ls -lh "${armbian_outputpath}/" 2>/dev/null)"
 
         elif [[ "${build_target}" == "kernel" ]]; then
 

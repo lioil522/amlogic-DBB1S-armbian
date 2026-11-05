@@ -49,8 +49,9 @@
 #
 # Related file storage path
 current_path="${PWD}"
-armbian_outputpath="${current_path}/build/output/images"
-armbian_rebuild_file="${armbian_outputpath}/*-trunk_*.img"
+armbian_inputpath="${ARMBIAN_INPUT_DIR:-${current_path}/build/output/images}"
+armbian_outputpath="${ARMBIAN_OUTPUT_DIR:-${current_path}/build/output/rebuilt/$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+armbian_rebuild_file="${armbian_inputpath}/*-trunk_*.img"
 build_path="${current_path}/build-armbian"
 kernel_path="${build_path}/kernel"
 uboot_path="${build_path}/u-boot"
@@ -110,6 +111,7 @@ root_mb="3000"
 rootfs_type="ext4"
 # Set Armbian OS type (server / desktop)
 os_type="server"
+requested_edition="auto"
 # Set Armbian builder signature
 builder_name=""
 
@@ -181,7 +183,7 @@ init_var() {
     echo -e "${STEPS} Initializing variables..."
 
     # If it is followed by [ : ], it means that the option requires a parameter value
-    local options="b:r:u:k:a:t:s:n:"
+    local options="b:r:u:k:a:t:s:n:e:"
     parsed_args=$(getopt -o "${options}" -- "${@}")
     [[ ${?} -ne 0 ]] && error_msg "Parameter parsing failed."
     eval set -- "${parsed_args}"
@@ -249,6 +251,11 @@ init_var() {
             else
                 error_msg "Invalid -s parameter [ ${2} ]!"
             fi
+            ;;
+        -e)
+            requested_edition="${2}"
+            [[ "${requested_edition}" =~ ^(auto|server|desktop)$ ]] || error_msg "Invalid edition: ${requested_edition}"
+            shift 2
             ;;
         -n | --BuilderName)
             if [[ -n "${2}" ]]; then
@@ -422,8 +429,16 @@ find_armbian() {
     echo -e "${STEPS} Searching for Armbian file..."
 
     # Get armbian release and version
-    armbian_rebuild_name="$(ls ${armbian_rebuild_file} 2>/dev/null | head -n 1 | awk -F "/" '{print $NF}')"
-    [[ -n "${armbian_rebuild_name}" ]] || error_msg "The armbian original file does not exist: [ ${armbian_rebuild_file} ]"
+    local images=()
+    shopt -s nullglob
+    images=("${armbian_inputpath}"/*-trunk_*.img)
+    shopt -u nullglob
+    [[ "${#images[@]}" -eq 1 ]] || error_msg "Expected exactly one input image in [ ${armbian_inputpath} ], found ${#images[@]}"
+    armbian_rebuild_name="${images[0]##*/}"
+    [[ "$(realpath -m "${armbian_inputpath}")" != "$(realpath -m "${armbian_outputpath}")" ]] || error_msg "Input and output directories must differ."
+    mkdir -p "${armbian_outputpath}" || error_msg "Cannot create output directory."
+    [[ -z "$(find "${armbian_outputpath}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || error_msg "Output directory must be empty: ${armbian_outputpath}"
+    printf 'board\trelease\tkernel\tedition\tfile\tsha256\n' >"${armbian_outputpath}/artifacts.tsv"
 
     # Find armbian version info: such as [ 22.02.0 ]
     armbian_rebuild_version="$(echo ${armbian_rebuild_name} | grep -oE '[2-9][0-9]\.[0-9]{1,2}\.[0-9]{1,2}' | head -n 1)"
@@ -685,7 +700,7 @@ extract_armbian() {
 
     armbian_image_file="${tmp_aml_image}/armbian_${board}_${kernel}.img"
     rm -f ${armbian_image_file}
-    cp -f "${armbian_outputpath}/${armbian_rebuild_name}" "${armbian_image_file}"
+    cp -f "${armbian_inputpath}/${armbian_rebuild_name}" "${armbian_image_file}" || error_msg "Cannot copy input image."
 
     loop_old="$(losetup -P -f --show "${armbian_image_file}")"
     [[ -n "${loop_old}" ]] || error_msg "losetup ${armbian_image_file} failed."
@@ -701,6 +716,10 @@ extract_armbian() {
     # Find VERSION_CODENAME in ${os_release_file}: such as [resolute]
     release_codename="$(cat ${os_release_file} | grep -oE "^VERSION_CODENAME=.*" | cut -d"=" -f2)"
     [[ -z "${release_codename}" ]] && error_msg "The [ ${os_release_file}: VERSION_CODENAME ] is invalid."
+
+    os_type="$(bash "${current_path}/tools/detect-armbian-edition.sh" "${tmp_armbian}")" || error_msg "Cannot determine image edition."
+    [[ "${requested_edition}" == auto || "${requested_edition}" == "${os_type}" ]] || error_msg "Requested ${requested_edition}, but input rootfs is ${os_type}."
+    echo -e "${INFO} Input and output edition: ${os_type}"
 
     # Delete all files of /boot partition and replace it later
     rm -rf boot/*
@@ -879,7 +898,6 @@ copy_files() {
     # Copy the different files
     different_bootfs="${different_files}/${board}/bootfs"
     different_rootfs="${different_files}/${board}/rootfs"
-    [[ -d "${different_bootfs}" ]] && cp -rf ${different_bootfs}/. ${tag_bootfs}
     [[ -d "${different_rootfs}" ]] && cp -af --no-preserve=ownership ${different_rootfs}/. ${tag_rootfs}
 
     # Copy the bootloader files
@@ -940,6 +958,12 @@ replace_kernel() {
 
     # Special procedures for flashing specific boards
     [[ "${adjust_kernel_files}" == "yes" ]] && adjust_kernel_files_cmd
+
+    # Board boot files must win over the kernel archive, including same-name DTBs.
+    [[ ! -d "${different_bootfs}" ]] || cp -rf "${different_bootfs}/." "${tag_bootfs}/" || error_msg "Cannot apply board boot files."
+    if [[ "${board}" == s912-b1s ]]; then
+        bash "${different_files}/${board}/install-dtb.sh" "${tag_bootfs}" "${tag_rootfs}" "${kernel_name}" || error_msg "B1S DTB build/config check failed."
+    fi
 }
 
 refactor_bootfs() {
@@ -1223,6 +1247,8 @@ refactor_rootfs() {
         rm -rf usr/lib/modules/*/kernel/drivers/gpu/drm/{amd,i915,nouveau,radeon,xe,vmwgfx,mgag200,ast} 2>/dev/null
         rm -rf usr/lib/modules/*/kernel/drivers/net/wireless/{intel,mediatek,ath,realtek,quantenna,microchip,silabs} 2>/dev/null
         rm -rf usr/lib/modules/*/kernel/drivers/{infiniband,isdn,thunderbolt} 2>/dev/null
+        # Rebuild indexes after slimming so modprobe never selects removed modules.
+        depmod -b "${tag_rootfs}" "${kernel_name}" || error_msg "Cannot rebuild B1S module indexes."
 
         # 禁用不需要的服务
         rm -f etc/systemd/system/multi-user.target.wants/{openvpn.service,rpcbind.service,vnstat.service} 2>/dev/null
@@ -1268,6 +1294,8 @@ refactor_rootfs() {
     # Optimize wifi/bluetooth module
     [[ -d "usr/lib/firmware/brcm" ]] && (
         cd usr/lib/firmware/brcm/ && rm -f ../*.hcd
+        # B1S uses its board NVRAM; other boards' variants are removed below.
+        [[ "${board}" == "s912-b1s" ]] && exit 0
 
         # gtking/gtking pro is bcm4356 wifi/bluetooth, wifi5 module AP6356S
         sed -e "s/macaddr=.*/macaddr=${random_macaddr}:00/" "brcmfmac4356-sdio.txt" >"brcmfmac4356-sdio.azw,gtking.txt"
@@ -1296,8 +1324,7 @@ refactor_rootfs() {
     )
 
     # B1S 专用：清理 brcm 目录中其他芯片的固件（约省 14MB）
-    # NOTE: 必须放在上面的 brcm 处理块之后 —— 那段会 sed 读取 4356/4375/4339/43456/4354/43430
-    #       等其他芯片的 nvram 生成各板变体，提前删除会导致 sed 报错。
+    # 其他板型的 NVRAM 变体生成已跳过 B1S；这里保留本板实际使用的文件。
     # B1S 实际只需要：brcmfmac43455-sdio.{bin,txt,clm_blob} + BCM4345C0.hcd
     if [[ "${board}" == "s912-b1s" && -d "usr/lib/firmware/brcm" ]]; then
         (
@@ -1313,6 +1340,7 @@ refactor_rootfs() {
             rm -f nvram_ap6*.txt clm_bcm*.blob config.txt BCM43430A1.* 2>/dev/null
         )
         echo -e "${INFO} s912-b1s brcm firmware slimmed."
+        (cd usr/lib/firmware/brcm && find . -type f -print0 | sort -z | xargs -0 sha256sum) >usr/lib/b1s/firmware.sha256
     fi
 
     # Add custom Armbian information
@@ -1368,12 +1396,17 @@ clean_tmp() {
     cd "${tmp_outpath}"
     # Compress Armbian image file. Prefer pigz when available; otherwise fall back to gzip.
     if command -v pigz >/dev/null 2>&1; then
-        pigz -qf "${armbian_filename}"
+        pigz -qf "${armbian_filename}" || error_msg "Image compression failed."
     else
-        gzip -qf "${armbian_filename}"
+        gzip -qf "${armbian_filename}" || error_msg "Image compression failed."
     fi
     # Move Armbian files to the output directory
-    mv -f "${armbian_filename}"* -t "${armbian_outputpath}"
+    [[ -s "${armbian_filename}.gz" ]] || error_msg "Compressed image is missing."
+    gzip -t "${armbian_filename}.gz" || error_msg "Compressed image is corrupt."
+    mv -f "${armbian_filename}.gz" "${armbian_outputpath}/" || error_msg "Cannot publish image."
+    local image_sha
+    image_sha="$(sha256sum "${armbian_outputpath}/${armbian_filename}.gz" | cut -d' ' -f1)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${board}" "${release_codename}" "${kernel}" "${os_type}" "${armbian_filename}.gz" "${image_sha}" >>"${armbian_outputpath}/artifacts.tsv"
 
     cd "${current_path}"
     rm -rf "${tmp_dir}" && sync
@@ -1383,12 +1416,14 @@ loop_rebuild() {
     cd "${current_path}"
     echo -e "${STEPS} Building Armbian images..."
 
+    local completed_builds=0 requested_builds=0
     j="1"
     for b in "${build_armbian[@]}"; do
         {
             # Set specific configuration for building Armbian system
             board="${b}"
             confirm_version
+            requested_builds=$((requested_builds + ${#build_kernel[@]}))
 
             i="1"
             for k in "${build_kernel[@]}"; do
@@ -1414,7 +1449,12 @@ loop_rebuild() {
                     replace_kernel
                     refactor_bootfs
                     refactor_rootfs
+                    if [[ "${board}" == s912-b1s ]]; then
+                        bash "${different_files}/${board}/install-runtime.sh" "${tag_rootfs}" "${tag_bootfs}" "${kernel_name}" || error_msg "B1S runtime assets/dependencies audit failed."
+                        python3 "${current_path}/tools/b1s/check_boot_files.py" "${tag_bootfs}" "${ROOTFS_UUID}" >"${tag_bootfs}/b1s-boot-audit.json" || error_msg "B1S boot file/UUID audit failed; see b1s-boot-audit.json."
+                    fi
                     clean_tmp
+                    completed_builds=$((completed_builds + 1))
 
                     echo -e "(${j}.${i}) Armbian built successfully. \n"
                     ((i++))
@@ -1424,7 +1464,12 @@ loop_rebuild() {
             ((j++))
         }
     done
+    [[ "${completed_builds}" -gt 0 && "${completed_builds}" -eq "${requested_builds}" ]] || error_msg "Built ${completed_builds}/${requested_builds} requested images."
+    python3 "${current_path}/tools/verify-armbian-output.py" "${armbian_outputpath}" || error_msg "Artifact verification failed."
 }
+
+# Allow isolated build-contract tests to source functions without running a build.
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] || return 0
 
 # Show welcome message
 echo -e "${STEPS} Welcome to the Armbian Rebuild Tool!"

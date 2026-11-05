@@ -1,0 +1,7 @@
+// This B1S unit has no physical ADC keys. The vendor keypad node
+// (reset/vol-/vol+/esc/home) has no matching hardware and would only
+// create a permanently idle input device if CONFIG_KEYBOARD_ADC is enabled.
+// Keep the node in the baseline for documentation, but do not bind it.
+&{/adc-keys} {
+	status = "disabled";
+};

@@ -1,0 +1,11 @@
+&mali {
+	#cooling-cells = <2>;
+};
+
+&cpu_cooling_maps {
+	map-gpu {
+		trip = <&cpu_passive>;
+		// THERMAL_NO_LIMIT: use the registered devfreq cooling range.
+		cooling-device = <&mali 0xffffffff 0xffffffff>;
+	};
+};

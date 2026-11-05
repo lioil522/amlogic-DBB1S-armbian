@@ -1,0 +1,13 @@
+[Unit]
+Description=B1S HDMI audio source select (AIU HDMI CTRL SRC=I2S)
+After=sound.target alsa-restore.service
+Wants=sound.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/b1s-hdmi-audio.sh
+TimeoutStartSec=15s
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

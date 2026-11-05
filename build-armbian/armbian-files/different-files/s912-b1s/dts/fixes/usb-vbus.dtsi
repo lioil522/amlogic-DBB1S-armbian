@@ -1,0 +1,18 @@
+// Verified on B1S (2026-11-05): original USB-A is PHY1/OTG; added port is host-only.
+/ {
+	b1s_usb_vbus: regulator-usb-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "USB_OTG_VBUS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio_ao 5 0>; // GPIOAO_5, GPIO_ACTIVE_HIGH
+		enable-active-high;
+	};
+};
+
+// The Meson glue driver toggles this supply on role changes. Attaching it
+// to every PHY (or marking it always-on) would prevent device-mode VBUS off.
+&usb {
+	vbus-supply = <&b1s_usb_vbus>;
+	dr_mode = "otg";
+};

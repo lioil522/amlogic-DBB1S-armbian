@@ -1,0 +1,7 @@
+// Factory amhdmitx_probe drives GPIOH_3 low to enable HDMI 5 V.
+// fixed-regulator's legacy GPIO quirk uses enable-active-high, not flags
+// alone, to determine polarity. Both declarations must agree.
+&hdmi_5v {
+	gpio = <&gpio 19 1>; // GPIOH_3, GPIO_ACTIVE_LOW
+	/delete-property/ enable-active-high;
+};

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+case "$1" in prereqs) exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+for name in brcmfmac43455-sdio.bin brcmfmac43455-sdio.txt brcmfmac43455-sdio.clm_blob BCM4345C0.hcd; do
+    file="/usr/lib/firmware/brcm/$name"
+    if [ -f "$file" ]; then
+        copy_file firmware "$file"
+    fi
+done

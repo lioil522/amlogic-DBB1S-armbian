@@ -1,0 +1,39 @@
+name: Check B1S adaptation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rebuild'
+      - 'action.yml'
+      - 'tools/**'
+      - 'build-armbian/armbian-files/different-files/s912-b1s/**'
+      - 'build-armbian/armbian-files/common-files/usr/sbin/armbian-update'
+      - '.github/workflows/*b1s*'
+      - '.github/workflows/build-armbian-using-releases-files.yml'
+  pull_request:
+    paths:
+      - 'rebuild'
+      - 'action.yml'
+      - 'tools/**'
+      - 'build-armbian/armbian-files/different-files/s912-b1s/**'
+      - 'build-armbian/armbian-files/common-files/usr/sbin/armbian-update'
+      - '.github/workflows/*b1s*'
+      - '.github/workflows/build-armbian-using-releases-files.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install adaptation test dependencies
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler jq python3-yaml gcc make patch libegl-dev libgles-dev
+      - name: Check shell and workflow syntax
+        run: python3 tools/b1s/check-syntax.py
+      - name: Test DTB and build contracts
+        run: python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
+      - name: Compile headless GPU check
+        run: cc -O2 -Wall -Wextra -Werror tools/b1s/gpu-smoke.c -o "${RUNNER_TEMP}/b1s-gpu-smoke" -lEGL -lGLESv2
