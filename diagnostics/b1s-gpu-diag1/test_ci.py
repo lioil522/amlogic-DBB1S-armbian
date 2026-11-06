@@ -102,6 +102,13 @@ class BoundaryTests(unittest.TestCase):
                 subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
         self.assertIn("@sha256:", workflow["jobs"]["kernel"]["container"]["image"])
 
+    def test_runner_path_is_set_at_step_not_job_env(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/build-b1s-gpu-diag1.yml").read_text())
+        job = workflow["jobs"]["kernel"]
+        self.assertNotIn("runner.", str(job["env"]))
+        first = job["steps"][0]["run"]
+        self.assertIn('echo "B1S_DIAG_WORK=${RUNNER_TEMP}/b1s-gpu-diag1" >> "$GITHUB_ENV"', first)
+
     def test_patch_keeps_writes_pm_and_original_errors(self):
         text = (HERE / "inputs/source-changes.patch").read_text()
         added = "\n".join(line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++"))

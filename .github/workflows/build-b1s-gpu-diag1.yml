@@ -26,13 +26,13 @@ jobs:
       run:
         shell: bash
     env:
-      B1S_DIAG_WORK: ${{ runner.temp }}/b1s-gpu-diag1
       DEBIAN_FRONTEND: noninteractive
       LC_ALL: C
     steps:
       - name: Install explicit cross-build dependencies
         run: |
           set -euo pipefail
+          echo "B1S_DIAG_WORK=${RUNNER_TEMP}/b1s-gpu-diag1" >> "$GITHUB_ENV"
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates git curl gcc-12 g++-12 make flex bison bc \
