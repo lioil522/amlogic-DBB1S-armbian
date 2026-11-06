@@ -1,0 +1,10 @@
+{
+  "source_commit": "cea7acd4c5be4710f197426f017b56006e01367a",
+  "release": "6.18.60-b1s-gpu-diag2",
+  "cloud_patch_sha256": "58416e68c99eb4f34480a9aa1d11ca6310748bf6d3fdb9920267741d7a0af22c",
+  "local_full_patch_sha256": "4e55ad90e3272ca03dea8b88bf3cd050c601907ad836b4ac9d219db54bf6c46e",
+  "patch_conversion": "Unified local patch reserialized by Git with kernel .gitattributes; exact 8 file hashes/modes unchanged; original local patches retained",
+  "preserved_diag1_workflow_sha256": "02d6b06a782e36f87e97ceac8921fac412095b94844b3e3b27abaf581ef0e092",
+  "authorization": "User confirmed independent diag2 branch commit/push and GitHub Actions full build; no main/Release/install/reboot/GPU runtime",
+  "reference_config": "Authenticated diag1 cloud config, LOCALVERSION-only rename"
+}

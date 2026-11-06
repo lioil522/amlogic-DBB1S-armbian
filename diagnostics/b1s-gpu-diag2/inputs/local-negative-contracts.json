@@ -1,0 +1,51 @@
+{
+  "passed": true,
+  "negative_cases": [
+    {
+      "case": "IRQ mask mutation",
+      "result": "rejected",
+      "reason": "Original non-diagnostic code changed: panfrost_gpu.c"
+    },
+    {
+      "case": "poll timeout mutation",
+      "result": "rejected",
+      "reason": "Original non-diagnostic code changed: panfrost_gpu.c"
+    },
+    {
+      "case": "PM reference mutation",
+      "result": "rejected",
+      "reason": "Original non-diagnostic code changed: panfrost_job.c"
+    },
+    {
+      "case": "diagnostic default mutation",
+      "result": "rejected",
+      "reason": "Original non-diagnostic code changed: panfrost_drv.c"
+    },
+    {
+      "case": "budget mutation",
+      "result": "rejected",
+      "reason": "Original non-diagnostic code changed: panfrost_diag.h"
+    },
+    {
+      "case": "foreign behavior in helper",
+      "result": "rejected",
+      "reason": "Unreviewed operation in observation helper: {'regulator_enable'}"
+    },
+    {
+      "case": "second added MMIO",
+      "result": "rejected",
+      "reason": "Only RAWSTAT and STATUS may be additionally read per boundary"
+    },
+    {
+      "case": "missing owner gate",
+      "result": "rejected",
+      "reason": "Missing safety/publication contract: d->owner) != current"
+    },
+    {
+      "case": "missing release publication",
+      "result": "rejected",
+      "reason": "Missing safety/publication contract: atomic_set_release(&d->irq_state, 2)"
+    }
+  ],
+  "scope": "Mocked source reads only, no runtime GPU or physical source mutation"
+}

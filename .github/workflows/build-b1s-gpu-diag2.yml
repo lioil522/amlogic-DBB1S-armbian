@@ -1,0 +1,97 @@
+name: Build B1S GPU diag2 kernel
+
+on:
+  push:
+    branches: ['diag/b1s-gpu-diag2']
+    paths:
+      - '.github/workflows/build-b1s-gpu-diag2.yml'
+      - 'diagnostics/b1s-gpu-diag2/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b1s-gpu-diag2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kernel:
+    if: github.ref == 'refs/heads/diag/b1s-gpu-diag2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    container:
+      # Same Debian bookworm-slim amd64 manifest as the audited diag1 build.
+      image: debian:bookworm-slim@sha256:c67e92c8099ba22853ab4cfda7cfb494d253d6012ca82dee98ba8976772af018
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LC_ALL: C
+    steps:
+      - name: Install explicit cross-build dependencies
+        run: |
+          set -euo pipefail
+          echo "B1S_DIAG_WORK=${RUNNER_TEMP}/b1s-gpu-diag2" >> "$GITHUB_ENV"
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git curl gcc-12 g++-12 make flex bison bc \
+            gcc-12-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross \
+            libssl-dev libelf-dev zlib1g-dev libzstd-dev pkg-config dwarves \
+            python3 python3-yaml cpio xz-utils kmod rsync
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test diagnostic build contracts
+        run: python3 -m unittest discover -s diagnostics/b1s-gpu-diag2 -p 'test_*.py' -v
+      - name: Prepare pinned source, patch and resolved config
+        run: python3 diagnostics/b1s-gpu-diag2/ci.py prepare
+      - name: Test actual diag2 helpers with userspace stubs
+        run: |
+          set -euo pipefail
+          python3 diagnostics/b1s-gpu-diag2/observation-test.py
+          python3 diagnostics/b1s-gpu-diag2/budget-test.py
+      - name: Compile Panfrost objects first
+        run: python3 diagnostics/b1s-gpu-diag2/ci.py panfrost
+      - name: Compile Image and all modules
+        id: compile
+        run: python3 diagnostics/b1s-gpu-diag2/ci.py full
+      - name: Audit and package local-only diagnostic artifacts
+        run: python3 diagnostics/b1s-gpu-diag2/ci.py audit
+      - name: Upload build evidence, including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b1s-gpu-diag2-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.B1S_DIAG_WORK }}/evidence/
+            ${{ env.B1S_DIAG_WORK }}/validation/
+            diagnostics/b1s-gpu-diag2/inputs/
+            diagnostics/b1s-gpu-diag2/README.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload audited kernel artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-6.18.60-b1s-gpu-diag2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.B1S_DIAG_WORK }}/artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Preserve compiled outputs if audit fails
+        if: failure() && steps.compile.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: b1s-gpu-diag2-UNAUDITED-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.B1S_DIAG_WORK }}/build/arch/arm64/boot/Image
+            ${{ env.B1S_DIAG_WORK }}/build/vmlinux
+            ${{ env.B1S_DIAG_WORK }}/build/System.map
+            ${{ env.B1S_DIAG_WORK }}/build/Module.symvers
+            ${{ env.B1S_DIAG_WORK }}/build/modules.order
+            ${{ env.B1S_DIAG_WORK }}/build/modules.builtin*
+            ${{ env.B1S_DIAG_WORK }}/build/**/*.ko
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30

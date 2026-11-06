@@ -1,0 +1,10 @@
+{
+  "diag1_source_and_config_unchanged": true,
+  "final_diag2_source_manifest": "PASS",
+  "final_object_manifest": "PASS",
+  "object_sha256": "4ca2e6a296a80081eda557c472c41fd2c84ef00e8d5a65e0f07296a5cc02041e",
+  "object_bytes": 2908832,
+  "incremental_patch_sha256": "a8d0ce5836672e2f9bec3be7cd4fa8bd0ed1870d8b28dc01682e086fadcb131e",
+  "upstream_patch_sha256": "4e55ad90e3272ca03dea8b88bf3cd050c601907ad836b4ac9d219db54bf6c46e",
+  "raw_object_not_loadable": true
+}

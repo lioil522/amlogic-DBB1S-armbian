@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "checks": [
+    "panfrost_device.c: original code tokens preserved",
+    "panfrost_device.h: original code tokens preserved",
+    "panfrost_drv.c: original code tokens preserved",
+    "panfrost_gpu.c: original code tokens preserved",
+    "panfrost_job.c: original code tokens preserved",
+    "panfrost_mmu.c: original code tokens preserved",
+    "panfrost_diag.h: original code tokens preserved",
+    "first resume / owner-only capture",
+    "single IRQ release/acquire publication",
+    "13 boundary snapshots / 26 additional relaxed reads maximum",
+    "no new MMIO in IRQ or end/error paths",
+    "no added behavioral operations",
+    "256-event budget and healthy log policy preserved",
+    "config suffix-only change"
+  ],
+  "scope": "Source-token contracts; not hardware equivalence or runtime validation"
+}

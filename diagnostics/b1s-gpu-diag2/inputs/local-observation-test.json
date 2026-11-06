@@ -1,0 +1,5 @@
+{
+  "passed": true,
+  "result": "disabled/probe/foreign-owner/first-resume/poll-values/IRQ-publication/end-no-MMIO/budget/phase-bounds: PASS",
+  "scope": "Userspace mocks of actual helpers; not live IRQ/MMIO/GPU or hardware ordering proof"
+}
