@@ -10,6 +10,7 @@
 - `inputs/release.config`：当前 6.18.60 Release 快照配置；下载包/内包校验已经通过，保存包的摘要/资产元数据。该资产于镜像构建后更新，**不是已证明的历史镜像输入**。
 - `inputs/local-resolved.config`：本地 GCC12 olddefconfig 的对照，不直接冒充云端配置。云端重新解析并保存全部差异，仅允许已识别的工具能力变化；PM/GPU/cooling/USB/DWARF/BTF值保持一致。
 - `inputs/SHA256SUMS`：入仓输入摘要。
+- `inputs/source-files.json`：八个修改/新增源码文件的精确SHA-256与权限。校验全部diff路径/模式/补丁载荷及实际文件内容，仅忽略Git随对象数量改变的index对象ID缩写；观察到的云端补丁另存证据，不修改原冻结补丁。
 
 ## 边界
 

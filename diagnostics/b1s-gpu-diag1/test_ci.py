@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline cloud build contracts; no kernel compilation or GPU operations."""
 import os
+import json
 import re
 import subprocess
 import tempfile
@@ -56,6 +57,51 @@ class ConfigTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_source_hash_scope_and_permission_checks_are_mandatory(self):
+        with tempfile.TemporaryDirectory(prefix="b1s-source-check.") as directory:
+            base = Path(directory)
+            build = ci.Build.__new__(ci.Build)
+            build.src, build.inputs, build.ev = base / "source", base / "inputs", base / "evidence"
+            for path in (build.src, build.inputs, build.ev):
+                path.mkdir()
+            names = ["x", ci.HEADER]
+            for name in names:
+                path = build.src / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("audited\n")
+            frozen = b"index 01234567..abcdef01 100644\n+audited\n"
+            build.patch = lambda: frozen.replace(b"01234567..abcdef01", b"0123456..abcdef0")
+            build.run = lambda args, cwd: "x\n"
+            (build.inputs / "source-changes.patch").write_bytes(frozen)
+            manifest = {name: {"sha256": ci.sha(build.src / name),
+                "mode": (build.src / name).stat().st_mode & 0o777} for name in names}
+            (build.inputs / "source-files.json").write_text(json.dumps(manifest))
+            build.check_source()
+            (build.src / "x").write_text("changed\n")
+            with self.assertRaisesRegex(ValueError, "content/mode"):
+                build.check_source()
+            (build.src / "x").write_text("audited\n")
+            (build.src / "x").chmod(manifest["x"]["mode"] ^ 0o100)
+            with self.assertRaisesRegex(ValueError, "content/mode"):
+                build.check_source()
+            (build.src / "x").chmod(manifest["x"]["mode"])
+            build.run = lambda args, cwd: "x\nrogue\n"
+            with self.assertRaisesRegex(ValueError, "file set"):
+                build.check_source()
+
+    def test_git_index_abbreviation_is_not_source_content(self):
+        long = b"diff --git a/x b/x\nindex 01234567..abcdef01 100644\n@@ -1 +1 @@\n-old\n+new\n"
+        short = long.replace(b"01234567..abcdef01", b"0123456..abcdef0")
+        self.assertNotEqual(long, short)
+        self.assertEqual(ci.canonical_patch(long), ci.canonical_patch(short))
+
+    def test_patch_hunks_paths_and_modes_are_still_checked(self):
+        patch = b"diff --git a/x b/x\nindex 01234567..abcdef01 100644\n@@ -1 +1 @@\n-old\n+new\n"
+        for changed in (patch.replace(b"+new", b"+bad"), patch.replace(b"b/x", b"b/y"),
+                patch.replace(b"100644", b"100755"), patch.replace(b"@@ -1 +1 @@", b"@@ -2 +2 @@")):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(ci.canonical_patch(patch), ci.canonical_patch(changed))
+
     def test_local_build_execution_is_refused(self):
         with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(ValueError, "GitHub Actions"):
             ci.Build()

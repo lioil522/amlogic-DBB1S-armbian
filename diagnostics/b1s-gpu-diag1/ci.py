@@ -43,6 +43,14 @@ def config_values(text):
     return values
 
 
+def canonical_patch(data):
+    # Git auto-abbreviates object IDs according to repository object count.
+    # Keep all paths, modes, hunks and payload unchanged; file hashes below
+    # verify content independently of this serialization-only metadata.
+    return re.sub(rb"(?m)^index [0-9a-f]+\.\.[0-9a-f]+( [0-7]+)?$",
+        lambda match: b"index <object-ids>" + (match.group(1) or b""), data)
+
+
 def validate_config(reference, actual):
     old, new = config_values(reference), config_values(actual)
     for symbol in REQUIRED:
@@ -143,10 +151,30 @@ class Build:
         self.verify_inputs()
         if self.run(["git", "rev-parse", "HEAD"], self.src).strip() != COMMIT:
             raise ValueError("Source commit changed")
-        if self.patch() != (self.inputs / "source-changes.patch").read_bytes():
-            raise ValueError("Source patch changed")
+        self.check_source()
         if (self.out / ".config").read_bytes() != (self.ev / "resolved.config").read_bytes():
             raise ValueError("Build config changed")
+
+    def check_source(self):
+        observed = self.patch()
+        (self.ev / "observed-source.patch").write_bytes(observed)
+        frozen = (self.inputs / "source-changes.patch").read_bytes()
+        if canonical_patch(observed) != canonical_patch(frozen):
+            raise ValueError("Source patch payload changed")
+        files = json.loads((self.inputs / "source-files.json").read_text())
+        changed = self.run(["git", "diff", "HEAD", "--name-only"], self.src).splitlines() + [HEADER]
+        if set(changed) != set(files):
+            raise ValueError("Changed source file set differs from audited inputs")
+        for name, expected in files.items():
+            path = self.src / name
+            if self.src not in path.resolve().parents or path.is_symlink():
+                raise ValueError(f"Unsafe source file: {name}")
+            if sha(path) != expected["sha256"] or path.stat().st_mode & 0o777 != expected["mode"]:
+                raise ValueError(f"Source content/mode mismatch: {name}")
+        self.write("source-check.json", {"passed": True, "file_count": len(files),
+            "frozen_patch_sha256": sha(self.inputs / "source-changes.patch"),
+            "observed_patch_sha256": sha(self.ev / "observed-source.patch"),
+            "comparison": "all patch payload/modes plus exact source SHA256; Git index ID abbreviation excluded"})
 
     def prepare(self):
         self.verify_inputs()
@@ -192,8 +220,7 @@ class Build:
         self.run(["git", "apply", "--check", str(self.inputs / "source-changes.patch")], self.src)
         self.run(["git", "apply", str(self.inputs / "source-changes.patch")], self.src)
         self.run(["git", "diff", "--check"], self.src)
-        if self.patch() != (self.inputs / "source-changes.patch").read_bytes():
-            raise ValueError("Applied patch does not reproduce local source changes")
+        self.check_source()
         (self.out / ".config").write_bytes((self.inputs / "release.config").read_bytes())
         self.run([str(self.src / "scripts/config"), "--file", str(self.out / ".config"),
             "--set-str", "LOCALVERSION", "-b1s-gpu-diag1", "--disable", "LOCALVERSION_AUTO",

@@ -1,0 +1,34 @@
+{
+  "drivers/gpu/drm/panfrost/panfrost_device.c": {
+    "sha256": "639680c8e92d03646a1c74c71df712d1c752fbf19cf3f67af0464a06c329bd33",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_device.h": {
+    "sha256": "663b138f865a12f7c28461ddb8eb23dbbe6adcf0c4859759e7a9065631f73dfb",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_diag.h": {
+    "sha256": "ef1e970f476c1d5adfa7f0858a912a3ded936cb2d3b6cce0c72ba5fabc545279",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_drv.c": {
+    "sha256": "814d6c9bff98331d03a76c4e3c9399d9905b9dac86c5dd8043cf8fcae69e592a",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_gpu.c": {
+    "sha256": "5b87a85c65cfe044418d9d862830a474c41a0503ff49864fd7b73d20c27453ad",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_job.c": {
+    "sha256": "6f44ab8823b9524e0c62da73c5f67c757ef33af16eae3d29e6272dfef0ac01bf",
+    "mode": 420
+  },
+  "drivers/gpu/drm/panfrost/panfrost_mmu.c": {
+    "sha256": "d3abddeab67b9846c71b5c46bfad46fde034150cec764667fe3c43d8c0594e48",
+    "mode": 420
+  },
+  "drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile": {
+    "sha256": "1d267dd7742bc693d3bf48dd74f419f24125299769a3e1c6113af480cf26db12",
+    "mode": 420
+  }
+}
