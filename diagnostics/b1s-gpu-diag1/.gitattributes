@@ -1,0 +1,3 @@
+# Serialized diff context intentionally contains leading spaces/tabs and blank
+# context lines. Preserve the audited patch bytes; check applied source instead.
+inputs/*.patch -whitespace
