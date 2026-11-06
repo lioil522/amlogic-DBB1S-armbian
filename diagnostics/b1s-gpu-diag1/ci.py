@@ -23,7 +23,7 @@ HEADER = "drivers/gpu/drm/panfrost/panfrost_diag.h"
 REQUIRED = ("PM", "PM_OPP", "PM_DEVFREQ", "DEVFREQ_THERMAL", "DEVFREQ_GOV_SIMPLE_ONDEMAND",
     "DRM_PANFROST", "THERMAL", "THERMAL_OF", "USB_GADGET", "USB_DWC2", "USB_DWC3",
     "USB_ROLE_SWITCH", "PHY_MESON_GXL_USB2", "USB_DWC2_DUAL_ROLE", "USB_DWC3_DUAL_ROLE",
-    "DEBUG_INFO", "DEBUG_INFO_DWARF5", "DEBUG_INFO_BTF", "DEBUG_INFO_BTF_MODULES")
+    "DEBUG_INFO", "DEBUG_INFO_DWARF5", "DEBUG_INFO_BTF", "DEBUG_INFO_BTF_MODULES", "CC_CAN_LINK")
 DISK_FLOOR = 2 * 1024**3
 
 
@@ -49,6 +49,33 @@ def canonical_patch(data):
     # verify content independently of this serialization-only metadata.
     return re.sub(rb"(?m)^index [0-9a-f]+\.\.[0-9a-f]+( [0-7]+)?$",
         lambda match: b"index <object-ids>" + (match.group(1) or b""), data)
+
+
+def image_header_check(header, file_bytes, system_map):
+    if len(header) != 64 or header[56:60] != b"ARM\x64":
+        raise ValueError("Bad ARM64 Image header/magic")
+    symbols = {}
+    for line in system_map.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[2] in ("_text", "_edata", "_end"):
+            if fields[2] in symbols:
+                raise ValueError(f"Duplicate Image boundary symbol: {fields[2]}")
+            symbols[fields[2]] = int(fields[0], 16)
+    if set(symbols) != {"_text", "_edata", "_end"}:
+        raise ValueError("Missing Image boundary symbols")
+    data_size = symbols["_edata"] - symbols["_text"]
+    memory_size = symbols["_end"] - symbols["_text"]
+    encoded_size = struct.unpack_from("<Q", header, 16)[0]
+    # ARM64 image_size includes BSS/page-table memory, not just file bytes.
+    if not 64 <= data_size <= memory_size or file_bytes != data_size or encoded_size != memory_size:
+        raise ValueError(f"Image boundaries mismatch: file={file_bytes} data={data_size} "
+            f"header_memory={encoded_size} symbol_memory={memory_size}")
+    if header[32:56] != bytes(24):
+        raise ValueError("Nonzero reserved Image fields")
+    return {"file_bytes": file_bytes, "effective_memory_bytes": memory_size,
+        "zero_init_and_reserved_tail_bytes": memory_size - data_size,
+        "text_offset": struct.unpack_from("<Q", header, 8)[0],
+        "flags": struct.unpack_from("<Q", header, 24)[0], "symbols": symbols}
 
 
 def validate_config(reference, actual):
@@ -285,15 +312,33 @@ class Build:
             print((self.ev / (stage + ".log")).read_text()[-16000:])
             raise ValueError(f"{stage} did not pass")
 
+    def check_image(self):
+        image, vmlinux = self.out / "arch/arm64/boot/Image", self.out / "vmlinux"
+        with image.open("rb") as stream:
+            header = stream.read(64)
+        (self.ev / "Image.header.bin").write_bytes(header)
+        self.write("image-precheck.json", {"file_bytes": image.stat().st_size, "header_hex": header.hex()})
+        image_info = image_header_check(header, image.stat().st_size, (self.out / "System.map").read_text())
+        rebuilt = self.ev / "Image.from-vmlinux"
+        # Exactly the pinned arch/arm64/boot/Makefile OBJCOPYFLAGS_Image.
+        self.run(["aarch64-linux-gnu-objcopy", "-O", "binary", "-R", ".note", "-R", ".note.gnu.build-id",
+            "-R", ".comment", "-S", str(vmlinux), str(rebuilt)])
+        original_sha, rebuilt_sha = sha(image), sha(rebuilt)
+        matches = original_sha == rebuilt_sha
+        self.write("image-reconstruction.json", {"image_sha256": original_sha,
+            "rebuilt_sha256": rebuilt_sha, "matches": matches})
+        if not matches:
+            raise ValueError("Image differs from pinned objcopy reconstruction of vmlinux")
+        self.write("image-check.json", {"passed": True, **image_info, "sha256": original_sha,
+            "objcopy_reconstruction_matches": True})
+        return image_info
+
     def audit(self):
         self.verify()
         if json.loads((self.ev / "full.json").read_text())["state"] != "passed":
             raise ValueError("Full build did not pass")
+        image_info = self.check_image()
         image, vmlinux = self.out / "arch/arm64/boot/Image", self.out / "vmlinux"
-        with image.open("rb") as stream:
-            header = stream.read(64)
-        if header[56:60] != b"ARM\x64" or not 0 < struct.unpack_from("<Q", header, 16)[0] <= image.stat().st_size:
-            raise ValueError("Bad ARM64 Image")
         if (self.out / "include/config/kernel.release").read_text().strip() != RELEASE:
             raise ValueError("Wrong final kernel release")
         if "AArch64" not in self.run(["aarch64-linux-gnu-readelf", "-h", str(vmlinux)]):
@@ -344,7 +389,7 @@ class Build:
         self.run(["tar", "-C", str(self.out), "-I", "xz -T2 -3", "-cf", str(output / "vmlinux-debug.tar.xz"), "vmlinux"])
         report = {"result": "local-only artifacts audited; NOT installed/boot-tested", "release": RELEASE,
             "source_commit": COMMIT, "module_count": len(modules), "vermagic": sorted(vermagics),
-            "image_bytes": image.stat().st_size, "vmlinux_sha256": sha(vmlinux),
+            "image_bytes": image.stat().st_size, "image_header": image_info, "vmlinux_sha256": sha(vmlinux),
             "panfrost_sha256": sha(panfrost), "modules": module_hashes,
             "provenance": json.loads((self.ev / "provenance.json").read_text())}
         (output / "audit.json").write_text(json.dumps(report, indent=2) + "\n")

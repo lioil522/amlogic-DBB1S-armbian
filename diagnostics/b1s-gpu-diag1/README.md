@@ -24,4 +24,10 @@ Panfrost 仅在 B1S/GXM 上启用观测。保留 PM 引用/策略、50ms autosus
 
 成功时 Actions artifacts 包含 Image、System.map、Module.symvers、resolved.config、全部模块归档、完整调试 vmlinux 归档、逐模块哈希和审计报告；故障时仍上传可用证据。每个归档/主产物均有 SHA-256；不打包基础 rootfs 或替换正式 DTB。
 
+ARM64 Image审计区分文件数据长度 `_edata-_text` 与头中有效内存长度 `_end-_text`（包含BSS/页表保留），再用固定Makefile的objcopy参数从vmlinux重生成并逐字节哈希对照。完整编译成功但审计失败时，另保存明确标注UNAUDITED的Image/vmlinux/全部模块等原始产物；这些未认证材料不能当验收套件或直接安装。
+
+显式安装ARM64交叉libc开发文件，使CC_CAN_LINK能力与本地配置一致；它仅供云端工具能力探测，不进入盒子或内核rootfs。
+
+离线契约现为30项，含真实ARM64小型ELF的文件/内存边界、objcopy重生成、载荷损坏拒绝及失败头证据留存。run42183210793的Image/modules编译返回0，但旧尺寸审计失败；没有保存原Image，不能声称该轮产物已通过新检查。下一轮必须重新编译并完成全套审计。
+
 模块归档布局为 `lib/modules/6.18.60-b1s-gpu-diag1/kernel/...`，保留模块调试信息和 BTF、builtin/order 元数据；没有在构建机运行系统安装或生成目标系统 initrd。**不是可直接启动的镜像，也不提供自动安装脚本。** 实机安装、FDT/启动更改、重启和 GPU 诊断负载均须另行授权，并先确认 USB 根盘及可恢复引导条件。
