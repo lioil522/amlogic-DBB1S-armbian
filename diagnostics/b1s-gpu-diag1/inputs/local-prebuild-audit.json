@@ -1,0 +1,21 @@
+{
+  "stage": "panfrost objects only; no final module link/runtime test",
+  "passed": true,
+  "warnings": 0,
+  "object_bytes": 2829608,
+  "object_sha256": "53538b2a3cf7694a96e07e83d1a1e015ed88df2cb49cb16bafe52e9b5f7a530f",
+  "log_sha256": "013cf618ad2ec639722aa96c8414c7b6b8fc2153b34cd2b69a09d89ba3838da8",
+  "patch_sha256": "b40b12a85c68f49c31a5e71b7086ad6e931606e7feee2c8e64d0919af7edcb40",
+  "input_manifest_sha256": "61872174d265d523d7caa995768cbe9b87e503dfcab96fb7cdd368c8fda9cf52",
+  "budget_test": {
+    "result": "8 threads / 1600000 calls: 256 unique events, 1 notice, saturated at 257: PASS",
+    "scope": "userspace C11 atomic stub test of actual helper; not kernel/runtime GPU testing"
+  },
+  "checks": [
+    "original MMIO-write/PM/error call sequences unchanged",
+    "normal diagnostic string literals do not match fault|timeout|stuck|error",
+    "patch applies against pinned HEAD temporary index",
+    "required PM/GPU/cooling/USB dual-role/DWARF5+BTF config unchanged",
+    "resource threshold unit checks passed"
+  ]
+}

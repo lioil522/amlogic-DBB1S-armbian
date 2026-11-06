@@ -1,0 +1,455 @@
+diff --git a/drivers/gpu/drm/panfrost/panfrost_device.c b/drivers/gpu/drm/panfrost/panfrost_device.c
+index 0c5778a4..1b4a7191 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_device.c
++++ b/drivers/gpu/drm/panfrost/panfrost_device.c
+@@ -10,6 +10,7 @@
+ #include <linux/regulator/consumer.h>
+ 
+ #include "panfrost_device.h"
++#include "panfrost_diag.h"
+ #include "panfrost_devfreq.h"
+ #include "panfrost_features.h"
+ #include "panfrost_gem.h"
+@@ -404,7 +405,13 @@ bool panfrost_exception_needs_reset(const struct panfrost_device *pfdev,
+ 
+ void panfrost_device_reset(struct panfrost_device *pfdev, bool enable_job_int)
+ {
+-	panfrost_gpu_soft_reset(pfdev);
++	int ret;
++
++	panfrost_diag_log(pfdev, "device-reset.begin", "job_int=%d pending=%d",
++			  enable_job_int, atomic_read(&pfdev->reset.pending));
++	ret = panfrost_gpu_soft_reset(pfdev);
++	/* Observe the return; preserve the original continuation on failure. */
++	panfrost_diag_log(pfdev, "device-reset.after-soft", "rc=%d", ret);
+ 
+ 	panfrost_gpu_power_on(pfdev);
+ 	panfrost_mmu_reset(pfdev);
+@@ -412,6 +419,7 @@ void panfrost_device_reset(struct panfrost_device *pfdev, bool enable_job_int)
+ 	panfrost_jm_reset_interrupts(pfdev);
+ 	if (enable_job_int)
+ 		panfrost_jm_enable_interrupts(pfdev);
++	panfrost_diag_log(pfdev, "device-reset.end", "job_int=%d", enable_job_int);
+ }
+ 
+ static int panfrost_device_runtime_resume(struct device *dev)
+@@ -419,10 +427,15 @@ static int panfrost_device_runtime_resume(struct device *dev)
+ 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	panfrost_diag_log(pfdev, "runtime-resume.begin", "pm_features=%x",
++			  pfdev->comp->pm_features);
++
+ 	if (pfdev->comp->pm_features & BIT(GPU_PM_RT)) {
+ 		ret = reset_control_deassert(pfdev->rstc);
+-		if (ret)
++		if (ret) {
++			panfrost_diag_log(pfdev, "runtime-resume.reset-control", "rc=%d", ret);
+ 			return ret;
++		}
+ 
+ 		ret = clk_enable(pfdev->clock);
+ 		if (ret)
+@@ -435,8 +448,10 @@ static int panfrost_device_runtime_resume(struct device *dev)
+ 		}
+ 	}
+ 
++	panfrost_diag_regs(pfdev, "runtime-resume.resources-ready");
+ 	panfrost_device_reset(pfdev, true);
+ 	panfrost_devfreq_resume(pfdev);
++	panfrost_diag_log(pfdev, "runtime-resume.end", "rc=0");
+ 
+ 	return 0;
+ 
+@@ -446,6 +461,7 @@ static int panfrost_device_runtime_resume(struct device *dev)
+ err_clk:
+ 	if (pfdev->comp->pm_features & BIT(GPU_PM_RT))
+ 		reset_control_assert(pfdev->rstc);
++	panfrost_diag_log(pfdev, "runtime-resume.exit", "rc=%d", ret);
+ 	return ret;
+ }
+ 
+@@ -453,9 +469,14 @@ static int panfrost_device_runtime_suspend(struct device *dev)
+ {
+ 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
+ 
+-	if (!panfrost_jm_is_idle(pfdev))
++	panfrost_diag_log(pfdev, "runtime-suspend.begin", "pending=%d",
++			  atomic_read(&pfdev->reset.pending));
++	if (!panfrost_jm_is_idle(pfdev)) {
++		panfrost_diag_log(pfdev, "runtime-suspend.busy", "rc=%d", -EBUSY);
+ 		return -EBUSY;
++	}
+ 
++	panfrost_diag_regs(pfdev, "runtime-suspend.before-irqs");
+ 	panfrost_devfreq_suspend(pfdev);
+ 	panfrost_jm_suspend_irq(pfdev);
+ 	panfrost_mmu_suspend_irq(pfdev);
+@@ -470,6 +491,8 @@ static int panfrost_device_runtime_suspend(struct device *dev)
+ 		reset_control_assert(pfdev->rstc);
+ 	}
+ 
++	/* State only: clocks/reset/domain can become inaccessible after this. */
++	panfrost_diag_log(pfdev, "runtime-suspend.end", "rc=0");
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/panfrost/panfrost_device.h b/drivers/gpu/drm/panfrost/panfrost_device.h
+index 918c5790..fef3ec97 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_device.h
++++ b/drivers/gpu/drm/panfrost/panfrost_device.h
+@@ -146,6 +146,8 @@ struct panfrost_device {
+ 	struct panfrost_features features;
+ 	const struct panfrost_compatible *comp;
+ 	DECLARE_BITMAP(is_suspended, PANFROST_COMP_BIT_MAX);
++	bool b1s_diag_enabled;
++	atomic_t b1s_diag_seq;
+ 
+ 	spinlock_t as_lock;
+ 	unsigned long as_alloc_mask;
+diff --git a/drivers/gpu/drm/panfrost/panfrost_drv.c b/drivers/gpu/drm/panfrost/panfrost_drv.c
+index 020c626b..f2d3a9a5 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_drv.c
++++ b/drivers/gpu/drm/panfrost/panfrost_drv.c
+@@ -21,6 +21,7 @@
+ #include <drm/drm_utils.h>
+ 
+ #include "panfrost_device.h"
++#include "panfrost_diag.h"
+ #include "panfrost_gem.h"
+ #include "panfrost_mmu.h"
+ #include "panfrost_job.h"
+@@ -32,6 +33,10 @@
+ static bool unstable_ioctls;
+ module_param_unsafe(unstable_ioctls, bool, 0600);
+ 
++static bool b1s_diag = true;
++module_param(b1s_diag, bool, 0400);
++MODULE_PARM_DESC(b1s_diag, "Bounded B1S PM/reset observations (diag1 kernel only)");
++
+ static int panfrost_ioctl_query_timestamp(struct panfrost_device *pfdev,
+ 					  u64 *arg)
+ {
+@@ -978,6 +983,12 @@ static int panfrost_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 
+ 	pfdev->coherent = device_get_dma_attr(&pdev->dev) == DEV_DMA_COHERENT;
++	pfdev->b1s_diag_enabled = b1s_diag &&
++		of_machine_is_compatible("dangbei,b1s") &&
++		of_device_is_compatible(pdev->dev.of_node, "amlogic,meson-gxm-mali");
++	atomic_set(&pfdev->b1s_diag_seq, 0);
++	panfrost_diag_log(pfdev, "probe.begin", "pm_features=%x coherent=%d",
++			  pfdev->comp->pm_features, pfdev->coherent);
+ 
+ 	mutex_init(&pfdev->shrinker_lock);
+ 	INIT_LIST_HEAD(&pfdev->shrinker_list);
+@@ -990,10 +1001,13 @@ static int panfrost_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	pm_runtime_set_active(pfdev->base.dev);
++	panfrost_diag_regs(pfdev, "probe.initialized");
+ 	pm_runtime_mark_last_busy(pfdev->base.dev);
+ 	pm_runtime_enable(pfdev->base.dev);
+ 	pm_runtime_set_autosuspend_delay(pfdev->base.dev, 50); /* ~3 frames */
+ 	pm_runtime_use_autosuspend(pfdev->base.dev);
++	panfrost_diag_log(pfdev, "probe.pm-enabled", "autosuspend_ms=%d",
++			  pfdev->base.dev->power.autosuspend_delay);
+ 
+ 	/*
+ 	 * Register the DRM device with the core and the connectors with
+@@ -1012,6 +1026,7 @@ static int panfrost_probe(struct platform_device *pdev)
+ err_out2:
+ 	drm_dev_unregister(&pfdev->base);
+ err_out1:
++	panfrost_diag_log(pfdev, "probe.cleanup", "rc=%d", err);
+ 	pm_runtime_disable(pfdev->base.dev);
+ 	panfrost_device_fini(pfdev);
+ 	pm_runtime_set_suspended(pfdev->base.dev);
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gpu.c b/drivers/gpu/drm/panfrost/panfrost_gpu.c
+index 7d555e63..7d938012 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gpu.c
++++ b/drivers/gpu/drm/panfrost/panfrost_gpu.c
+@@ -15,6 +15,7 @@
+ #include <drm/drm_print.h>
+ 
+ #include "panfrost_device.h"
++#include "panfrost_diag.h"
+ #include "panfrost_features.h"
+ #include "panfrost_issues.h"
+ #include "panfrost_gpu.h"
+@@ -45,6 +46,8 @@ static irqreturn_t panfrost_gpu_irq_handler(int irq, void *data)
+ 		if (state & GPU_IRQ_MULTIPLE_FAULT)
+ 			dev_warn(pfdev->base.dev, "There were multiple GPU faults - some have not been reported\n");
+ 
++		panfrost_diag_log(pfdev, "gpu-irq", "state=%08x fs=%08x addr=%016llx",
++				  state, fault_status, address);
+ 		gpu_write(pfdev, GPU_INT_MASK, 0);
+ 	}
+ 
+@@ -64,6 +67,7 @@ int panfrost_gpu_soft_reset(struct panfrost_device *pfdev)
+ 	int ret;
+ 	u32 val;
+ 
++	panfrost_diag_regs(pfdev, "soft-reset.before");
+ 	gpu_write(pfdev, GPU_INT_MASK, 0);
+ 	gpu_write(pfdev, GPU_INT_CLEAR, GPU_IRQ_RESET_COMPLETED);
+ 
+@@ -74,17 +78,20 @@ int panfrost_gpu_soft_reset(struct panfrost_device *pfdev)
+ 		val, val & GPU_IRQ_RESET_COMPLETED, 10, 10000);
+ 
+ 	if (ret) {
++		panfrost_diag_log(pfdev, "soft-reset.poll", "rc=%d raw=%08x", ret, val);
+ 		dev_err(pfdev->base.dev, "gpu soft reset timed out, attempting hard reset\n");
+ 
+ 		gpu_write(pfdev, GPU_CMD, GPU_CMD_HARD_RESET);
+ 		ret = readl_relaxed_poll_timeout(pfdev->iomem + GPU_INT_RAWSTAT, val,
+ 						 val & GPU_IRQ_RESET_COMPLETED, 100, 10000);
+ 		if (ret) {
++			panfrost_diag_log(pfdev, "hard-reset.poll", "rc=%d raw=%08x", ret, val);
+ 			dev_err(pfdev->base.dev, "gpu hard reset timed out\n");
+ 			return ret;
+ 		}
+ 	}
+ 
++	panfrost_diag_regs(pfdev, "soft-reset.completed");
+ 	gpu_write(pfdev, GPU_INT_CLEAR, GPU_IRQ_MASK_ALL);
+ 
+ 	/* Only enable the interrupts we care about */
+@@ -92,6 +99,7 @@ int panfrost_gpu_soft_reset(struct panfrost_device *pfdev)
+ 		  GPU_IRQ_MASK_ERROR |
+ 		  GPU_IRQ_PERFCNT_SAMPLE_COMPLETED |
+ 		  GPU_IRQ_CLEAN_CACHES_COMPLETED);
++	panfrost_diag_regs(pfdev, "soft-reset.irq-enabled");
+ 
+ 	/*
+ 	 * All in-flight jobs should have released their cycle
+@@ -478,30 +486,40 @@ void panfrost_gpu_power_on(struct panfrost_device *pfdev)
+ 		val, val == pfdev->features.tiler_present, 10, 1000);
+ 	if (ret)
+ 		dev_err(pfdev->base.dev, "error powering up gpu tiler");
++	panfrost_diag_regs(pfdev, "power-on.after");
+ }
+ 
+ void panfrost_gpu_power_off(struct panfrost_device *pfdev)
+ {
+ 	int ret;
+ 	u32 val;
++	int shader_ret, tiler_ret;
++	u32 shader_val, tiler_val;
+ 
+ 	gpu_write(pfdev, SHADER_PWROFF_LO, pfdev->features.shader_present);
+ 	ret = readl_relaxed_poll_timeout(pfdev->iomem + SHADER_PWRTRANS_LO,
+ 					 val, !val, 1, 2000);
+ 	if (ret)
+ 		dev_err(pfdev->base.dev, "shader power transition timeout");
++	shader_ret = ret;
++	shader_val = val;
+ 
+ 	gpu_write(pfdev, TILER_PWROFF_LO, pfdev->features.tiler_present);
+ 	ret = readl_relaxed_poll_timeout(pfdev->iomem + TILER_PWRTRANS_LO,
+ 					 val, !val, 1, 2000);
+ 	if (ret)
+ 		dev_err(pfdev->base.dev, "tiler power transition timeout");
++	tiler_ret = ret;
++	tiler_val = val;
+ 
+ 	gpu_write(pfdev, L2_PWROFF_LO, pfdev->features.l2_present);
+ 	ret = readl_poll_timeout(pfdev->iomem + L2_PWRTRANS_LO,
+ 				 val, !val, 0, 2000);
+ 	if (ret)
+ 		dev_err(pfdev->base.dev, "l2 power transition timeout");
++	/* Reuse polled values; no extra reads after the internal power-off. */
++	panfrost_diag_log(pfdev, "power-off.after", "rc=%d/%d/%d trans=%08x/%08x/%08x",
++			  shader_ret, tiler_ret, ret, shader_val, tiler_val, val);
+ }
+ 
+ void panfrost_gpu_suspend_irq(struct panfrost_device *pfdev)
+diff --git a/drivers/gpu/drm/panfrost/panfrost_job.c b/drivers/gpu/drm/panfrost/panfrost_job.c
+index 11894a6b..2e025c61 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_job.c
++++ b/drivers/gpu/drm/panfrost/panfrost_job.c
+@@ -12,6 +12,7 @@
+ #include <drm/panfrost_drm.h>
+ 
+ #include "panfrost_device.h"
++#include "panfrost_diag.h"
+ #include "panfrost_devfreq.h"
+ #include "panfrost_job.h"
+ #include "panfrost_features.h"
+@@ -808,7 +809,11 @@ static void panfrost_reset_work(struct work_struct *work)
+ 	struct panfrost_device *pfdev;
+ 
+ 	pfdev = container_of(work, struct panfrost_device, reset.work);
++	panfrost_diag_log(pfdev, "reset-worker.begin", "pending=%d",
++			  atomic_read(&pfdev->reset.pending));
+ 	panfrost_reset(pfdev, NULL);
++	panfrost_diag_log(pfdev, "reset-worker.end", "pending=%d",
++			  atomic_read(&pfdev->reset.pending));
+ }
+ 
+ static const struct drm_sched_backend_ops panfrost_sched_ops = {
+diff --git a/drivers/gpu/drm/panfrost/panfrost_mmu.c b/drivers/gpu/drm/panfrost/panfrost_mmu.c
+index 50ff3084..8ad3e24b 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_mmu.c
++++ b/drivers/gpu/drm/panfrost/panfrost_mmu.c
+@@ -19,6 +19,7 @@
+ #include <linux/sizes.h>
+ 
+ #include "panfrost_device.h"
++#include "panfrost_diag.h"
+ #include "panfrost_mmu.h"
+ #include "panfrost_gem.h"
+ #include "panfrost_features.h"
+@@ -83,6 +84,8 @@ static int wait_ready(struct panfrost_device *pfdev, u32 as_nr)
+ 		/* The GPU hung, let's trigger a reset */
+ 		panfrost_device_schedule_reset(pfdev);
+ 		dev_err(pfdev->base.dev, "AS_ACTIVE bit stuck\n");
++		panfrost_diag_log(pfdev, "as-wait", "as=%u rc=%d status=%08x caller=%pS",
++				  as_nr, ret, val, (void *)_RET_IP_);
+ 	}
+ 
+ 	return ret;
+@@ -96,6 +99,9 @@ static int write_cmd(struct panfrost_device *pfdev, u32 as_nr, u32 cmd)
+ 	status = wait_ready(pfdev, as_nr);
+ 	if (!status)
+ 		mmu_write(pfdev, AS_COMMAND(as_nr), cmd);
++	else
++		panfrost_diag_log(pfdev, "as-command.not-written", "as=%u cmd=%u rc=%d",
++				  as_nr, cmd, status);
+ 
+ 	return status;
+ }
+@@ -357,6 +363,7 @@ void panfrost_mmu_reset(struct panfrost_device *pfdev)
+ 
+ 	mmu_write(pfdev, MMU_INT_CLEAR, ~0);
+ 	mmu_write(pfdev, MMU_INT_MASK, ~0);
++	panfrost_diag_regs(pfdev, "mmu-reset.irq-enabled");
+ }
+ 
+ static size_t get_pgsize(u64 addr, size_t size, size_t *count)
+@@ -720,6 +727,7 @@ static void panfrost_mmu_release_ctx(struct kref *kref)
+ 
+ 	spin_lock(&pfdev->as_lock);
+ 	if (mmu->as >= 0) {
++		panfrost_diag_log(pfdev, "ctx-release", "as=%d", mmu->as);
+ 		pm_runtime_get_noresume(pfdev->base.dev);
+ 		if (pm_runtime_active(pfdev->base.dev))
+ 			panfrost_mmu_disable(pfdev, mmu->as);
+@@ -878,6 +886,7 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
+ 	u32 status = mmu_read(pfdev, MMU_INT_RAWSTAT);
+ 	int ret;
+ 
++	panfrost_diag_log(pfdev, "mmu-irq.begin", "raw=%08x", status);
+ 	while (status) {
+ 		u32 as = ffs(status | (status >> 16)) - 1;
+ 		u32 mask = BIT(as) | BIT(as + 16);
+@@ -890,6 +899,8 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
+ 		fault_status = mmu_read(pfdev, AS_FAULTSTATUS(as));
+ 		addr = mmu_read(pfdev, AS_FAULTADDRESS_LO(as));
+ 		addr |= (u64)mmu_read(pfdev, AS_FAULTADDRESS_HI(as)) << 32;
++		panfrost_diag_log(pfdev, "mmu-irq.as", "as=%u fs=%08x addr=%016llx",
++				  as, fault_status, addr);
+ 
+ 		/* decode the fault status */
+ 		exception_type = fault_status & 0xFF;
+diff --git a/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile b/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile
+index e8722fbd..d03a202d 100644
+--- a/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile
++++ b/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile
+@@ -7,5 +7,5 @@ ifeq ($(CONFIG_SFE_SUPPORT_IPV6),y)
+     ccflags-$(CONFIG_SFE_SUPPORT_IPV6) += -DSFE_SUPPORT_IPV6
+ endif
+ 
+-ccflags-y += -I$(obj)/../shortcut-fe
++ccflags-y += -I$(src)/../shortcut-fe
+ ccflags-y += -Werror -Wall -Wno-unused-but-set-parameter
+diff --git a/drivers/gpu/drm/panfrost/panfrost_diag.h b/drivers/gpu/drm/panfrost/panfrost_diag.h
+new file mode 100644
+index 00000000..e0e23c62
+--- /dev/null
++++ b/drivers/gpu/drm/panfrost/panfrost_diag.h
+@@ -0,0 +1,84 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* B1S diag1: bounded observation only; no PM references or register writes. */
++#ifndef __PANFROST_DIAG_H__
++#define __PANFROST_DIAG_H__
++
++#include <linux/io.h>
++#include <linux/pm_runtime.h>
++
++#include "panfrost_device.h"
++#include "panfrost_regs.h"
++
++#define PANFROST_B1S_DIAG_LIMIT 256
++
++static inline int panfrost_diag_take(struct panfrost_device *pfdev)
++{
++	int seq;
++
++	if (!pfdev->b1s_diag_enabled)
++		return 0;
++
++	/* Saturate: a long-running device must never wrap and reopen the budget. */
++	seq = atomic_fetch_add_unless(&pfdev->b1s_diag_seq, 1,
++				    PANFROST_B1S_DIAG_LIMIT + 1);
++	if (seq == PANFROST_B1S_DIAG_LIMIT)
++		dev_info(pfdev->base.dev,
++			 "b1s-diag1: observation limit reached; original diagnostics remain enabled\n");
++
++	return seq < PANFROST_B1S_DIAG_LIMIT ? seq + 1 : 0;
++}
++
++/* No MMIO: safe at callback entry/exit and in the reset worker. */
++#define panfrost_diag_log(pfdev, event, fmt, ...) do { \
++	int __seq = panfrost_diag_take(pfdev); \
++	if (__seq) \
++		dev_info((pfdev)->base.dev, \
++			 "b1s-diag1[%d] %s rpm=%d use=%d bits=%lx " fmt "\n", \
++			 __seq, event, READ_ONCE((pfdev)->base.dev->power.runtime_status), \
++			 atomic_read(&(pfdev)->base.dev->power.usage_count), \
++			 READ_ONCE((pfdev)->is_suspended[0]), ##__VA_ARGS__); \
++} while (0)
++
++/*
++ * Caller must already own an accessible GPU register bank. This helper never
++ * resumes hardware. Do not call after power-off or before resources recover.
++ * The snapshots are not atomic; IRQ/reset activity can interleave with reads.
++ * Avoid fault/error keywords in healthy snapshots: gpu-check checks dmesg.
++ */
++static inline void panfrost_diag_regs(struct panfrost_device *pfdev,
++				     const char *event)
++{
++	int seq = panfrost_diag_take(pfdev);
++	u32 raw, mask, fs, addr_lo, addr_hi, mmu_raw, mmu_mask;
++	u32 shader, tiler, l2, shader_trans, tiler_trans, l2_trans;
++
++	if (!seq)
++		return;
++
++	raw = readl_relaxed(pfdev->iomem + GPU_INT_RAWSTAT);
++	mask = readl_relaxed(pfdev->iomem + GPU_INT_MASK);
++	fs = readl_relaxed(pfdev->iomem + GPU_FAULT_STATUS);
++	addr_lo = readl_relaxed(pfdev->iomem + GPU_FAULT_ADDRESS_LO);
++	addr_hi = readl_relaxed(pfdev->iomem + GPU_FAULT_ADDRESS_HI);
++	mmu_raw = readl_relaxed(pfdev->iomem + MMU_INT_RAWSTAT);
++	mmu_mask = readl_relaxed(pfdev->iomem + MMU_INT_MASK);
++	shader = readl_relaxed(pfdev->iomem + SHADER_READY_LO);
++	tiler = readl_relaxed(pfdev->iomem + TILER_READY_LO);
++	l2 = readl_relaxed(pfdev->iomem + L2_READY_LO);
++	shader_trans = readl_relaxed(pfdev->iomem + SHADER_PWRTRANS_LO);
++	tiler_trans = readl_relaxed(pfdev->iomem + TILER_PWRTRANS_LO);
++	l2_trans = readl_relaxed(pfdev->iomem + L2_PWRTRANS_LO);
++
++	dev_info(pfdev->base.dev,
++		 "b1s-diag1[%d] %s rpm=%d use=%d bits=%lx raw=%08x mask=%08x fs=%08x addr=%08x%08x mmu_raw=%08x mmu_mask=%08x\n",
++		 seq, event, READ_ONCE(pfdev->base.dev->power.runtime_status),
++		 atomic_read(&pfdev->base.dev->power.usage_count),
++		 READ_ONCE(pfdev->is_suspended[0]), raw, mask, fs, addr_hi,
++		 addr_lo, mmu_raw, mmu_mask);
++	dev_info(pfdev->base.dev,
++		 "b1s-diag1[%d] %s ready=%08x/%08x/%08x trans=%08x/%08x/%08x (shader/tiler/l2)\n",
++		 seq, event, shader, tiler, l2, shader_trans, tiler_trans,
++		 l2_trans);
++}
++
++#endif

@@ -1,0 +1,72 @@
+make: Entering directory '/root/B1S适配检查/kernel-build-gpu-diag1/source'
+make[1]: Entering directory '/root/B1S适配检查/kernel-build-gpu-diag1/build'
+  GEN     Makefile
+  DESCEND bpf/resolve_btfids
+  HOSTCC  scripts/sorttable
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/linker.o
+  HOSTCC  scripts/asn1_compiler
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/gen_loader.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/relo_core.o
+  INSTALL libbpf_headers
+  GEN     arch/arm64/include/generated/asm/cpucap-defs.h
+  GEN     arch/arm64/include/generated/asm/sysreg-defs.h
+  INSTALL libsubcmd_headers
+  CC      scripts/mod/empty.o
+  HOSTCC  scripts/mod/mk_elfconfig
+  CC      scripts/mod/devicetable-offsets.s
+  MKELF   scripts/mod/elfconfig.h
+  HOSTCC  scripts/mod/modpost.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/usdt.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/zip.o
+  UPD     scripts/mod/devicetable-offsets.h
+  HOSTCC  scripts/mod/sumversion.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/elf.o
+  HOSTCC  scripts/mod/symsearch.o
+  HOSTCC  scripts/mod/file2alias.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/features.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/btf_iter.o
+  CC      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/btf_relocate.o
+  LD      /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/staticobjs/libbpf-in.o
+  LINK    /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/libbpf/libbpf.a
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/main.o
+  HOSTLD  scripts/mod/modpost
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/rbtree.o
+  UPD     include/generated/timeconst.h
+  CC      kernel/bounds.s
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/zalloc.o
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/string.o
+  CHKSHA1 /root/B1S适配检查/kernel-build-gpu-diag1/source/include/linux/atomic/atomic-arch-fallback.h
+  CHKSHA1 /root/B1S适配检查/kernel-build-gpu-diag1/source/include/linux/atomic/atomic-instrumented.h
+  CHKSHA1 /root/B1S适配检查/kernel-build-gpu-diag1/source/include/linux/atomic/atomic-long.h
+  UPD     include/generated/bounds.h
+  CC      arch/arm64/kernel/asm-offsets.s
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/ctype.o
+  HOSTCC  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/str_error_r.o
+  HOSTLD  /root/B1S适配检查/kernel-build-gpu-diag1/build/tools/bpf/resolve_btfids/resolve_btfids-in.o
+  LINK     resolve_btfids
+  UPD     include/generated/asm-offsets.h
+  CC      kernel/sched/rq-offsets.s
+  UPD     include/generated/rq-offsets.h
+  CALL    /root/B1S适配检查/kernel-build-gpu-diag1/source/scripts/checksyscalls.sh
+  LDS     arch/arm64/kernel/vdso/vdso.lds
+  CC      arch/arm64/kernel/vdso/vgettimeofday.o
+  AS      arch/arm64/kernel/vdso/note.o
+  AS      arch/arm64/kernel/vdso/sigreturn.o
+  CC      arch/arm64/kernel/vdso/vgetrandom.o
+  AS      arch/arm64/kernel/vdso/vgetrandom-chacha.o
+  LD      arch/arm64/kernel/vdso/vdso.so.dbg
+  VDSOSYM include/generated/vdso-offsets.h
+  OBJCOPY arch/arm64/kernel/vdso/vdso.so
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_drv.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_device.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_devfreq.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_gem.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_gem_shrinker.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_gpu.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_job.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_mmu.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_perfcnt.o
+  CC [M]  drivers/gpu/drm/panfrost/panfrost_dump.o
+  LD [M]  drivers/gpu/drm/panfrost/panfrost.o
+make[1]: Leaving directory '/root/B1S适配检查/kernel-build-gpu-diag1/build'
+make: Leaving directory '/root/B1S适配检查/kernel-build-gpu-diag1/source'
