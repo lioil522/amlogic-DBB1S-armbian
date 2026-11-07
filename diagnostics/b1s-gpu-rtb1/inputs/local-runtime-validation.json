@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "command": [
+    "gcc-12",
+    "-std=gnu11",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-Wno-unused-parameter",
+    "-O2",
+    "-I/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/validation/test-work",
+    "/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/tools/runtime-tests.c",
+    "-o",
+    "/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/validation/test-work/runtime-tests-unwind"
+  ],
+  "stdout": "PASS: 8 board/GPU/diag gates; 3584 A/B callback cases, including original pre-reset power-off failures\n",
+  "harness_sha256": "789436cdf7e6f860758d08fbd75204aef960586e9221af98b124d23fede7d805",
+  "addition": "simultaneous clk_enable failure and cleanup reset assert failure; original primary errno preserved"
+}

@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "object_sha256": "3d55853090873d76bc07088eb315ab425f3fd505256a52d9fbec6bf18a6f1de0",
+  "object_bytes": 2917216,
+  "release": "6.18.60-b1s-gpu-rtb1",
+  "resources": {
+    "disk_free": 2532347904,
+    "mem_available": 2124451840,
+    "swap_free": 2146938880
+  },
+  "scope": "Panfrost relocatable object only; no Image, loadable .ko or module suite",
+  "config_differences": {
+    "CONFIG_CC_VERSION_TEXT": [
+      "\"aarch64-linux-gnu-gcc-12 (Debian 12.2.0-14) 12.2.0\"",
+      "\"aarch64-linux-gnu-gcc-12 (Debian 12.2.0-14+deb12u1) 12.2.0\""
+    ]
+  }
+}

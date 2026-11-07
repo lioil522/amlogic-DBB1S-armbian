@@ -1,0 +1,171 @@
+Subject: [PATCH] drm/panfrost: B1S-only runtime external reset/clock trial
+
+Use the existing GPU_PM_RT resource sequence on B1S with a GXM GPU.
+Retain diag2 observations and all internal power/error handling.
+Record external API calls/results with bounded RAM-only logging.
+This is an independent experiment, not a validated hardware fix.
+
+---
+
+--- a/drivers/gpu/drm/panfrost/panfrost_device.c
++++ b/drivers/gpu/drm/panfrost/panfrost_device.c
+@@ -422,29 +422,66 @@
+ 	panfrost_diag_log(pfdev, "device-reset.end", "job_int=%d", enable_job_int);
+ }
+ 
++/* B1S_RTB1_TRACE_BEGIN */
++enum panfrost_b1s_rt_call {
++	B1S_RT_DEASSERT = BIT(0),
++	B1S_RT_CLOCK_ENABLE = BIT(1),
++	B1S_RT_BUS_ENABLE = BIT(2),
++	B1S_RT_BUS_DISABLE = BIT(3),
++	B1S_RT_CLOCK_DISABLE = BIT(4),
++	B1S_RT_ASSERT = BIT(5),
++};
++
++/* Callback-local RAM only. A return value is valid iff its call bit is set. */
++struct panfrost_b1s_rt_trace {
++	u32 calls;
++	int deassert_rc, clock_rc, bus_rc, assert_rc;
++};
++
++static void panfrost_b1s_rt_log(struct panfrost_device *pfdev,
++				const char *event,
++				const struct panfrost_b1s_rt_trace *trace)
++{
++	if (pfdev->b1s_rt_enabled)
++		panfrost_diag_log(pfdev, event,
++				  "calls=%02x deassert_rc=%d clock_rc=%d bus_rc=%d assert_rc=%d",
++				  trace->calls, trace->deassert_rc, trace->clock_rc,
++				  trace->bus_rc, trace->assert_rc);
++}
++
++/* B1S_RTB1_TRACE_END */
++
+ static int panfrost_device_runtime_resume(struct device *dev)
+ {
+ 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
++	struct panfrost_b1s_rt_trace trace = {};
+ 	int ret;
+ 
+ 	panfrost_diag_log(pfdev, "runtime-resume.begin", "pm_features=%x",
+ 			  pfdev->comp->pm_features);
+ 	panfrost_diag2_begin(pfdev);
+ 
+-	if (pfdev->comp->pm_features & BIT(GPU_PM_RT)) {
++	if (pfdev->comp->pm_features & BIT(GPU_PM_RT) || pfdev->b1s_rt_enabled) {
+ 		ret = reset_control_deassert(pfdev->rstc);
++		trace.calls |= B1S_RT_DEASSERT;
++		trace.deassert_rc = ret;
+ 		if (ret) {
+ 			panfrost_diag_log(pfdev, "runtime-resume.reset-control", "rc=%d", ret);
+ 			panfrost_diag2_end(pfdev, ret);
++			panfrost_b1s_rt_log(pfdev, "b1s-rtb1.resume-ext", &trace);
+ 			return ret;
+ 		}
+ 
+ 		ret = clk_enable(pfdev->clock);
++		trace.calls |= B1S_RT_CLOCK_ENABLE;
++		trace.clock_rc = ret;
+ 		if (ret)
+ 			goto err_clk;
+ 
+ 		if (pfdev->bus_clock) {
+ 			ret = clk_enable(pfdev->bus_clock);
++			trace.calls |= B1S_RT_BUS_ENABLE;
++			trace.bus_rc = ret;
+ 			if (ret)
+ 				goto err_bus_clk;
+ 		}
+@@ -455,23 +492,30 @@
+ 	panfrost_devfreq_resume(pfdev);
+ 	panfrost_diag_log(pfdev, "runtime-resume.end", "rc=0");
+ 	panfrost_diag2_end(pfdev, 0);
++	panfrost_b1s_rt_log(pfdev, "b1s-rtb1.resume-ext", &trace);
+ 
+ 	return 0;
+ 
+ err_bus_clk:
+-	if (pfdev->comp->pm_features & BIT(GPU_PM_RT))
++	if (pfdev->comp->pm_features & BIT(GPU_PM_RT) || pfdev->b1s_rt_enabled) {
+ 		clk_disable(pfdev->clock);
++		trace.calls |= B1S_RT_CLOCK_DISABLE;
++	}
+ err_clk:
+-	if (pfdev->comp->pm_features & BIT(GPU_PM_RT))
+-		reset_control_assert(pfdev->rstc);
++	if (pfdev->comp->pm_features & BIT(GPU_PM_RT) || pfdev->b1s_rt_enabled) {
++		trace.assert_rc = reset_control_assert(pfdev->rstc);
++		trace.calls |= B1S_RT_ASSERT;
++	}
+ 	panfrost_diag_log(pfdev, "runtime-resume.exit", "rc=%d", ret);
+ 	panfrost_diag2_end(pfdev, ret);
++	panfrost_b1s_rt_log(pfdev, "b1s-rtb1.resume-ext", &trace);
+ 	return ret;
+ }
+ 
+ static int panfrost_device_runtime_suspend(struct device *dev)
+ {
+ 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
++	struct panfrost_b1s_rt_trace trace = {};
+ 
+ 	panfrost_diag_log(pfdev, "runtime-suspend.begin", "pending=%d",
+ 			  atomic_read(&pfdev->reset.pending));
+@@ -487,16 +531,21 @@
+ 	panfrost_gpu_suspend_irq(pfdev);
+ 	panfrost_gpu_power_off(pfdev);
+ 
+-	if (pfdev->comp->pm_features & BIT(GPU_PM_RT)) {
+-		if (pfdev->bus_clock)
++	if (pfdev->comp->pm_features & BIT(GPU_PM_RT) || pfdev->b1s_rt_enabled) {
++		if (pfdev->bus_clock) {
+ 			clk_disable(pfdev->bus_clock);
++			trace.calls |= B1S_RT_BUS_DISABLE;
++		}
+ 
+ 		clk_disable(pfdev->clock);
+-		reset_control_assert(pfdev->rstc);
++		trace.calls |= B1S_RT_CLOCK_DISABLE;
++		trace.assert_rc = reset_control_assert(pfdev->rstc);
++		trace.calls |= B1S_RT_ASSERT;
+ 	}
+ 
+ 	/* State only: clocks/reset/domain can become inaccessible after this. */
+ 	panfrost_diag_log(pfdev, "runtime-suspend.end", "rc=0");
++	panfrost_b1s_rt_log(pfdev, "b1s-rtb1.suspend-ext", &trace);
+ 	return 0;
+ }
+ 
+--- a/drivers/gpu/drm/panfrost/panfrost_device.h
++++ b/drivers/gpu/drm/panfrost/panfrost_device.h
+@@ -194,6 +194,8 @@
+ 	const struct panfrost_compatible *comp;
+ 	DECLARE_BITMAP(is_suspended, PANFROST_COMP_BIT_MAX);
+ 	bool b1s_diag_enabled;
++	/* Independent of the observation switch; B1S + GXM experiment only. */
++	bool b1s_rt_enabled;
+ 	atomic_t b1s_diag_seq;
+ 	/* B1S_DIAG2_BEGIN */
+ 	struct panfrost_b1s_diag2 b1s_diag2;
+--- a/drivers/gpu/drm/panfrost/panfrost_drv.c
++++ b/drivers/gpu/drm/panfrost/panfrost_drv.c
+@@ -983,13 +983,17 @@
+ 		return -ENODEV;
+ 
+ 	pfdev->coherent = device_get_dma_attr(&pdev->dev) == DEV_DMA_COHERENT;
++	pfdev->b1s_rt_enabled =
++		of_machine_is_compatible("dangbei,b1s") &&
++		of_device_is_compatible(pdev->dev.of_node, "amlogic,meson-gxm-mali");
+ 	pfdev->b1s_diag_enabled = b1s_diag &&
+ 		of_machine_is_compatible("dangbei,b1s") &&
+ 		of_device_is_compatible(pdev->dev.of_node, "amlogic,meson-gxm-mali");
+ 	atomic_set(&pfdev->b1s_diag_seq, 0);
+ 	panfrost_diag2_init(pfdev);
+-	panfrost_diag_log(pfdev, "probe.begin", "pm_features=%x coherent=%d",
+-			  pfdev->comp->pm_features, pfdev->coherent);
++	panfrost_diag_log(pfdev, "probe.begin", "pm_features=%x coherent=%d b1s_rtb1=%d",
++			  pfdev->comp->pm_features, pfdev->coherent,
++			  pfdev->b1s_rt_enabled);
+ 
+ 	mutex_init(&pfdev->shrinker_lock);
+ 	INIT_LIST_HEAD(&pfdev->shrinker_list);

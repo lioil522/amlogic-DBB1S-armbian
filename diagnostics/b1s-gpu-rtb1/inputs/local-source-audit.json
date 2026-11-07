@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "changed_files": [
+    "drivers/gpu/drm/panfrost/panfrost_device.c",
+    "drivers/gpu/drm/panfrost/panfrost_device.h",
+    "drivers/gpu/drm/panfrost/panfrost_drv.c"
+  ],
+  "checks": [
+    "A eight SHA/modes, config and full patch unchanged; independent B files",
+    "B1S root AND GXM GPU gate independent of b1s_diag",
+    "exactly four existing runtime GPU_PM_RT gates extended",
+    "all other non-observation code tokens preserved",
+    "unchanged GPU/MMU/job/diag2 source including pre-reset PWROFF rc/TRANS",
+    "RAM-only callback-local external API trace; original 256 event budget",
+    "configuration differs only by LOCALVERSION"
+  ],
+  "scope": "source contracts, not GPU hardware validation"
+}

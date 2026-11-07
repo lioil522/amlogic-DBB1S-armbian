@@ -1,0 +1,12 @@
+{
+  "source_commit": "cea7acd4c5be4710f197426f017b56006e01367a",
+  "release": "6.18.60-b1s-gpu-rtb1",
+  "a_project_commit": "a36775c9a9c88f82878ddc2e9d4c9f3d3f24ca44",
+  "cloud_patch_sha256": "666e170dff4d61a8c4d348656463dfe9bb6026a513dfbc173980f76a62369df9",
+  "local_full_patch_sha256": "97041b49e4b75023df3d5d89913fd87b93706f898af85a52c6e6543a790d6b94",
+  "patch_conversion": "Local unified patch reserialized with Git and fixed kernel .gitattributes; all eight source file SHA/modes verified; local original retained",
+  "preserved_diag1_workflow_sha256": "02d6b06a782e36f87e97ceac8921fac412095b94844b3e3b27abaf581ef0e092",
+  "preserved_diag2_workflow_sha256": "1d6543b07decc3a996309a8b9fe905f0c06f333fa65c455499165c7a88f3dc19",
+  "authorization": "User explicitly selected cloud build, authorizing independent B branch commit/push and GitHub Actions full build; no main/Release/install/boot/GPU runtime",
+  "reference_config": "Authenticated diag2 cloud config, LOCALVERSION-only change to rtb1"
+}

@@ -1,0 +1,10 @@
+{
+  "a_source_and_config_unchanged": true,
+  "final_b_source_manifest": "PASS",
+  "final_object_manifest": "PASS",
+  "object_sha256": "3d55853090873d76bc07088eb315ab425f3fd505256a52d9fbec6bf18a6f1de0",
+  "object_bytes": 2917216,
+  "incremental_patch_sha256": "b840e76880109481fdbead3dc467d952f1158be7e6441a83b5b0d03cc7809e41",
+  "upstream_patch_sha256": "97041b49e4b75023df3d5d89913fd87b93706f898af85a52c6e6543a790d6b94",
+  "raw_object_not_loadable": true
+}

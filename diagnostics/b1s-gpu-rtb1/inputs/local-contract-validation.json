@@ -1,0 +1,75 @@
+{
+  "incremental_replay": 8,
+  "upstream_replay": 8,
+  "negative_contract_tests": [
+    {
+      "file": "panfrost_drv.c",
+      "mutation": "of_machine_is_compatible(\"dangbei,b1s\") ||",
+      "rejected": "B1S root AND GXM gate changed"
+    },
+    {
+      "file": "panfrost_drv.c",
+      "mutation": "pfdev->b1s_rt_enabled = b1s_diag &&",
+      "rejected": "B1S root AND GXM gate changed"
+    },
+    {
+      "file": "panfrost_drv.c",
+      "mutation": "autosuspend_delay(pfdev->base.dev, 500)",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_drv.c"
+    },
+    {
+      "file": "panfrost_device.c",
+      "mutation": "",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_device.c"
+    },
+    {
+      "file": "panfrost_device.c",
+      "mutation": "readl(pfdev->iomem), trace->deassert_rc",
+      "rejected": "trace helper is not the reviewed RAM-only logger"
+    },
+    {
+      "file": "panfrost_device.c",
+      "mutation": "pm_runtime_get_sync(dev);",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_device.c"
+    },
+    {
+      "file": "panfrost_gpu.c",
+      "mutation": "val, !val, 1, 20000",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_gpu.c"
+    },
+    {
+      "file": "panfrost_gpu.c",
+      "mutation": "SHADER_PWROFF_LO, 3",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_gpu.c"
+    },
+    {
+      "file": "panfrost_diag.h",
+      "mutation": "#define PANFROST_B1S_DIAG_LIMIT 4096",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_diag.h"
+    },
+    {
+      "file": "panfrost_diag.h",
+      "mutation": "atomic_set(&d->irq_state, 2)",
+      "rejected": "unreviewed non-observation code: drivers/gpu/drm/panfrost/panfrost_diag.h"
+    }
+  ],
+  "compiled_callbacks": {
+    "command": [
+      "gcc-12",
+      "-std=gnu11",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-I/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/validation/test-work",
+      "/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/tools/runtime-tests.c",
+      "-o",
+      "/root/B1S\u9002\u914d\u68c0\u67e5/kernel-build-gpu-rtb1/validation/test-work/runtime-tests"
+    ],
+    "stdout": "PASS: 8 board/GPU/diag gates; 2560 A/B callback cases, including original pre-reset power-off failures\n",
+    "passed": true,
+    "scope": "stub APIs; not SoC register/clock/reset hardware"
+  },
+  "passed": true
+}
