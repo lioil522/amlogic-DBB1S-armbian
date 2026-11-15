@@ -72,6 +72,26 @@ JOBS=2 bash /path/to/new-b1s-build/compile.sh Image modules dtbs
 JOBS=2 bash /path/to/new-b1s-build/compile.sh bindeb-pkg
 ```
 
+### 发布给镜像工作流
+
+镜像构建只从 `kernel_stable` release 下载 `<版本>.tar.gz`，因此需按 ophub 目录结构封装：
+
+```text
+6.18.48-b1s-pm1.tar.gz
+└── 6.18.48-b1s-pm1/
+    ├── boot-6.18.48-b1s-pm1.tar.gz
+    ├── dtb-amlogic-6.18.48-b1s-pm1.tar.gz
+    ├── modules-6.18.48-b1s-pm1.tar.gz
+    ├── header-6.18.48-b1s-pm1.tar.gz
+    └── sha256sums
+```
+
+`boot-*` 至少包含 `vmlinuz-<版本>`、`uInitrd-<版本>` 和 `config-<版本>`；`uInitrd`
+必须由同一内核的 initramfs 生成（`mkinitramfs` 后 `mkimage` 封装），不能沿用旧内核的
+initrd。上传后镜像工作流用 `kernel_repo: <owner>/<repo>` 与
+`armbian_kernel_exact: <版本>` 选用；`reference.json` 中“完整运行内核来源未确立”
+的限制不因打包而解除。
+
 `compile.sh` 校验保存的输入、配置和主要编译工具，不运行 install 或修改
 启动选择。新工具链经 olddefconfig 会改变能力相关配置，差异会完整保存；
 记录工具链并不表示已获得原构建容器或能够逐字节复现运行内核。

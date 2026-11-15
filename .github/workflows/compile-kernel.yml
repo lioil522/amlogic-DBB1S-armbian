@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       kernel_source:
-        description: "Select the kernel source"
+        description: "Select the kernel source (B1S patches target ophub/linux-6.18.y)"
         required: false
-        default: "unifreq"
+        default: "ophub"
         type: choice
         options:
           - unifreq
@@ -21,7 +21,7 @@ on:
       kernel_version:
         description: "Select kernel version"
         required: false
-        default: "6.12.y"
+        default: "6.18.y"
         type: choice
         options:
           - 5.10.y
@@ -75,13 +75,10 @@ on:
           - resolute
           - noble
       kernel_sign:
-        description: "Set the kernel custom signature"
+        description: "Set the kernel custom signature (B1S default builds 6.18.y-b1s-pm1)"
         required: false
-        default: "-ophub"
-        type: choice
-        options:
-          - -ophub
-          - -yourname
+        default: "-b1s-pm1"
+        type: string
 
 env:
   TZ: Etc/UTC
@@ -94,6 +91,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Stage the B1S kernel config and patches
+        run: |
+          board=build-armbian/armbian-files/different-files/s912-b1s
+          mkdir -p build/kernel-config build/kernel-patch/common-kernel-patches
+          # The compile tool selects its template as config-<major>.<minor>.
+          cp "${board}/kernel/config-6.18.48-ophub" build/kernel-config/config-6.18
+          cp "${board}"/kernel/patches/*.patch build/kernel-patch/common-kernel-patches/
+          sha256sum build/kernel-config/config-6.18 build/kernel-patch/common-kernel-patches/*.patch
 
       - name: Initialize the build environment
         id: init
@@ -165,10 +171,14 @@ jobs:
             kernel-${{ inputs.kernel_toolchain }}-${{ inputs.kernel_version }}-
 
       - name: Compile the kernel [ ${{ inputs.kernel_version }} ]
-        uses: ophub/amlogic-s9xxx-armbian@main
+        uses: ./
         if: ${{ steps.disk.outputs.status == 'success' && !cancelled() }}
         with:
           build_target: kernel
+          kernel_config: build/kernel-config
+          kernel_patch: build/kernel-patch
+          auto_patch: true
+          enable_log: true
           kernel_source: ${{ inputs.kernel_source }}
           kernel_version: ${{ inputs.kernel_version }}
           kernel_auto: ${{ inputs.kernel_auto }}

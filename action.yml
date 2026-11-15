@@ -36,6 +36,10 @@ inputs:
     description: "Set kernel version."
     required: false
     default: "6.1.y_6.12.y"
+  armbian_kernel_exact:
+    description: "Set an exact kernel version, such as 6.18.48-b1s-pm1. Overrides armbian_kernel and disables auto_kernel."
+    required: false
+    default: ""
   auto_kernel:
     description: "Auto use the latest kernel."
     required: false
@@ -130,6 +134,9 @@ runs:
   using: "composite"
   steps:
     - shell: bash
+      env:
+        INPUT_ARMBIAN_KERNEL_EXACT: ${{ inputs.armbian_kernel_exact }}
+        INPUT_KERNEL_REPO: ${{ inputs.kernel_repo }}
       run: |
         cd ${{ github.action_path }}
         echo -e "Current running path: [ ${PWD} ]"
@@ -230,10 +237,27 @@ runs:
             echo -e "Starting to rebuild Armbian..."
             make_args=()
             [[ -n "${{ inputs.armbian_board }}"   ]] && make_args+=(-b "${{ inputs.armbian_board }}")
-            [[ -n "${{ inputs.kernel_repo }}"     ]] && make_args+=(-r "${{ inputs.kernel_repo }}")
+            kernel_repo="${INPUT_KERNEL_REPO:-}"
+            if [[ -n "${kernel_repo}" ]]; then
+                [[ "${kernel_repo}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+                    echo "Invalid kernel_repo input: [ ${kernel_repo} ]. Expected owner/repo."
+                    exit 1
+                }
+                make_args+=(-r "${kernel_repo}")
+            fi
             [[ -n "${{ inputs.kernel_usage }}"    ]] && make_args+=(-u "${{ inputs.kernel_usage }}")
             [[ -n "${{ inputs.armbian_kernel }}"  ]] && make_args+=(-k "${{ inputs.armbian_kernel }}")
             [[ -n "${{ inputs.auto_kernel }}"     ]] && make_args+=(-a "${{ inputs.auto_kernel }}")
+            # An exact version must be used verbatim: rebuild only expands X.Y patterns,
+            # and the latest-kernel query would otherwise replace it.
+            kernel_exact="${INPUT_ARMBIAN_KERNEL_EXACT:-}"
+            if [[ -n "${kernel_exact}" ]]; then
+                [[ "${kernel_exact}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z._-]*)?$ ]] || {
+                    echo "Invalid armbian_kernel_exact input: [ ${kernel_exact} ]"
+                    exit 1
+                }
+                make_args+=(-k "${kernel_exact}" -a false)
+            fi
             [[ -n "${{ inputs.armbian_fstype }}"  ]] && make_args+=(-t "${{ inputs.armbian_fstype }}")
             [[ -n "${{ inputs.armbian_size }}"    ]] && make_args+=(-s "${{ inputs.armbian_size }}")
             make_args+=(-e "${{ inputs.armbian_edition }}")

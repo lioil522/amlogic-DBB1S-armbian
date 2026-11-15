@@ -500,6 +500,36 @@ class DependencyInstallerTests(unittest.TestCase):
         self.assertIn("install qemu-user-static binfmt-support", workflow)
         self.assertIn("update-binfmts --enable qemu-aarch64", workflow)
 
+    def test_custom_kernel_wiring(self):
+        import yaml
+        action = yaml.safe_load((ROOT / "action.yml").read_text())
+        exact = action["inputs"]["armbian_kernel_exact"]
+        self.assertEqual(exact["default"], "")
+        action_text = (ROOT / "action.yml").read_text()
+        self.assertIn('make_args+=(-k "${kernel_exact}" -a false)', action_text)
+        self.assertIn("INPUT_ARMBIAN_KERNEL_EXACT", action_text)
+        self.assertIn("INPUT_KERNEL_REPO", action_text)
+        self.assertIn("Expected owner/repo", action_text)
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/build-armbian-using-releases-files.yml").read_text())
+        triggers = workflow.get("on", workflow.get(True))
+        inputs = triggers["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["armbian_kernel_exact"]["type"], "string")
+        self.assertEqual(inputs["armbian_kernel_exact"]["default"], "")
+        self.assertEqual(inputs["kernel_repo"]["type"], "string")
+        self.assertIn("armbian_kernel_exact: ${{ inputs.armbian_kernel_exact }}",
+                      (ROOT / ".github/workflows/build-armbian-using-releases-files.yml").read_text())
+
+        kernel_workflow = (ROOT / ".github/workflows/compile-kernel.yml").read_text()
+        self.assertIn("uses: ./", kernel_workflow)
+        self.assertIn("kernel_config: build/kernel-config", kernel_workflow)
+        self.assertIn("kernel_patch: build/kernel-patch", kernel_workflow)
+        self.assertIn("auto_patch: true", kernel_workflow)
+        self.assertIn("build/kernel-config/config-6.18", kernel_workflow)
+
+        rebuild = (ROOT / "rebuild").read_text()
+        self.assertIn('[[ "${lk}" == "${ck}" ]] && build_kernel+=("${lk}")', rebuild)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

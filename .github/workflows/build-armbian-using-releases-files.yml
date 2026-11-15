@@ -263,12 +263,10 @@ on:
         default: true
         type: boolean
       kernel_repo:
-        description: "Set the kernel repository."
+        description: "Set the kernel repository (owner/repo). Point this at your own kernel_stable release to use a custom B1S kernel."
         required: false
         default: "ophub/kernel"
-        type: choice
-        options:
-          - ophub/kernel
+        type: string
       kernel_usage:
         description: "Set the tags of the stable kernel."
         required: false
@@ -278,6 +276,11 @@ on:
           - stable
           - flippy
           - beta
+      armbian_kernel_exact:
+        description: "Optional exact kernel version from kernel_stable, such as 6.18.48-b1s-pm1. Overrides armbian_kernel and disables auto_kernel."
+        required: false
+        default: ""
+        type: string
       armbian_fstype:
         description: "Select armbian rootfs type."
         required: false
@@ -440,6 +443,7 @@ jobs:
           armbian_edition: ${{ inputs.armbian_edition }}
           install_b1s_dependencies: "true"
           armbian_kernel: ${{ inputs.armbian_kernel }}
+          armbian_kernel_exact: ${{ inputs.armbian_kernel_exact }}
           auto_kernel: ${{ inputs.auto_kernel }}
           kernel_repo: ${{ inputs.kernel_repo }}
           kernel_usage: ${{ inputs.kernel_usage }}

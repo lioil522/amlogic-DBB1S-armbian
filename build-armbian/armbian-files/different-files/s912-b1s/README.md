@@ -64,6 +64,25 @@ python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
 - `/usr/lib/b1s/runtime-assets.sha256`：最终码表、服务和三个脚本的哈希，可在镜像内以 `cd / && sha256sum -c /usr/lib/b1s/runtime-assets.sha256` 核对。
 - `/boot/b1s-runtime-audit.json`、`/usr/lib/b1s/runtime-audit.json`：离线依赖核查、目标软件包版本、服务启用链接和模块哈希。
 
+### 使用带 PHY PM 补丁的内核
+
+`build-armbian-using-releases-files.yml` 默认从 `ophub/kernel` 下载预编译内核，**不包含**
+`kernel/patches/0001`（PHY PM）和 `0002`（SFE 构建修复）。要得到“镜像 + 内核”都为
+修复版的产物，二选一：
+
+1. 按 `kernel/README.md` 用固定提交 `e0497a97` 本机生成 `6.18.48-b1s-pm1`，将
+   `boot-*`、`dtb-amlogic-*`、`modules-*`、`header-*` 四个包与 `sha256sums` 放进
+   `<版本>/` 目录并封成 `<版本>.tar.gz`，上传到自己的 `kernel_stable` release。
+   镜像工作流设置 `kernel_repo: <owner>/<repo>`、`armbian_kernel_exact: 6.18.48-b1s-pm1`。
+2. 运行 `compile-kernel.yml`（已改为使用本仓库 `./`，自动注入 `config-6.18` 和
+   `kernel/patches/*.patch`，签名默认 `-b1s-pm1`），产物上传到同一仓库的
+   `kernel_stable` release，再用上述两个输入重建镜像。
+
+`armbian_kernel_exact` 会强制关闭自动版本查询，版本按字面匹配；`kernel_repo` 只接受
+`owner/repo`。CI 编译克隆 6.18.y 最新源码而非固定提交，且上游编译脚本对补丁应用失败
+只告警，因此 CI 产物不等于本机已验证的 `6.18.48-b1s-pm1`，正式使用前需在可恢复
+介质上启动验收。
+
 ### 用户态配置与依赖
 
 `copy_files` 复制板级 rootfs；内核安装及模块精简/depmod 完成后，打包前运行

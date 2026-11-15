@@ -683,12 +683,20 @@ confirm_version() {
     build_kernel=()
     latest_kernel=(${tags_list[${conf_kernel_tags}]})
     for ck in "${model_kernel[@]}"; do
-        for lk in "${latest_kernel[@]}"; do
-            [[ "${lk}" =~ ^${ck}$ ]] && build_kernel+=("${lk}")
-        done
+        if [[ "${ck}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?-[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            # Exact versions with a custom suffix (for example 6.18.48-b1s-pm1)
+            # must match literally; only X.Y patterns are treated as expressions.
+            for lk in "${latest_kernel[@]}"; do
+                [[ "${lk}" == "${ck}" ]] && build_kernel+=("${lk}")
+            done
+        else
+            for lk in "${latest_kernel[@]}"; do
+                [[ "${lk}" =~ ^${ck}$ ]] && build_kernel+=("${lk}")
+            done
+        fi
     done
     # Check the kernel version
-    [[ "${#build_kernel[@]}" -eq 0 ]] && error_msg "The kernel list is invalid for [ ${board} ]"
+    [[ "${#build_kernel[@]}" -eq 0 ]] && error_msg "The kernel list is invalid for [ ${board} ]: [ ${latest_kernel[*]} ] does not match [ ${model_kernel[*]} ]"
 }
 
 extract_armbian() {
