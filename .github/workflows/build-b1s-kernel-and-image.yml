@@ -1,0 +1,268 @@
+#==========================================================================
+# One-run B1S pipeline: pinned kernel first, then the Armbian image that
+# carries it. No inputs are required; every value below is fixed.
+#==========================================================================
+name: Build B1S kernel and image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-b1s-kernel-and-image
+  cancel-in-progress: false
+
+env:
+  TZ: Etc/UTC
+  B1S_KERNEL_COMMIT: e0497a975383cedc8b8d8a7c9e84eac2e2238a6e
+  B1S_KERNEL_VERSION: 6.18.48-b1s-pm1
+  B1S_IMAGE_RELEASE: bookworm
+  B1S_IMAGE_EDITION: server
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 355
+    if: ${{ github.event.repository.owner.id == github.event.sender.id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize the build environment
+        id: init
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          docker rmi -f $(docker images -q) 2>/dev/null || true
+          [[ -n "${AGENT_TOOLSDIRECTORY}" ]] && sudo rm -rf "${AGENT_TOOLSDIRECTORY}"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android 2>/dev/null
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
+          sudo -E apt-get -y update
+          sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
+          sudo -E apt-get -y install $(curl -fsSL https://ophub.org/ubuntu2404-build-armbian-depends)
+          sudo -E systemctl daemon-reload
+          sudo -E apt-get -y autoremove --purge
+          sudo -E apt-get clean
+          sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
+          sudo rm -rf ~/{.cargo,.dotnet,.rustup}
+          sudo -E timedatectl set-timezone "${TZ:-Etc/UTC}"
+          sudo -E ntpdate ntp.ubuntu.com 0.pool.ntp.org || true
+          sudo -E timedatectl set-ntp true
+          date -u
+          timedatectl status || true
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Create virtual disk for extended storage
+        id: disk
+        run: |
+          mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 1)
+          root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 4)
+          sudo truncate -s "${mnt_size}"G /mnt/mnt.img
+          sudo truncate -s "${root_size}"G /root.img
+          sudo losetup /dev/loop6 /mnt/mnt.img
+          sudo losetup /dev/loop7 /root.img
+          sudo pvcreate /dev/loop6
+          sudo pvcreate /dev/loop7
+          sudo vgcreate github /dev/loop6 /dev/loop7
+          sudo lvcreate -n runner -l 100%FREE github
+          sudo mkfs.xfs -f -i sparse=0 -b size=4096 /dev/github/runner
+          sudo mkdir -p /builder
+          sudo mount /dev/github/runner /builder
+          sudo chown -R runner:runner /builder
+          df -Th
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Verify the pinned kernel inputs
+        run: |
+          board=build-armbian/armbian-files/different-files/s912-b1s
+          python3 - "${board}/kernel/reference.json" "${board}/kernel/config-6.18.48-ophub" "${board}/kernel/patches" <<'PY'
+          import hashlib, json, pathlib, sys
+          reference = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          config = pathlib.Path(sys.argv[2]).read_bytes()
+          assert hashlib.sha256(config).hexdigest() == reference["base_config_sha256"], "config hash mismatch"
+          for patch in reference["patches"]:
+              path = pathlib.Path(sys.argv[3]) / pathlib.Path(patch["file"]).name
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == patch["sha256"], patch["file"]
+          print("Pinned kernel inputs verified against reference.json")
+          PY
+
+      - name: Download the pinned kernel source
+        run: |
+          src=/builder/compile-kernel/kernel/linux-6.18.y
+          rm -rf "${src}"
+          mkdir -p "${src}"
+          curl -fsSL "https://github.com/ophub/linux-6.18.y/archive/${B1S_KERNEL_COMMIT}.tar.gz" \
+              | tar -xz --strip-components=1 -C "${src}"
+          test "$(sed -n 's/^VERSION = //p' "${src}/Makefile")" = "6"
+          test "$(sed -n 's/^PATCHLEVEL = //p' "${src}/Makefile")" = "18"
+          test "$(sed -n 's/^SUBLEVEL = //p' "${src}/Makefile")" = "48"
+          for patch in build-armbian/armbian-files/different-files/s912-b1s/kernel/patches/*.patch; do
+              patch -p1 --dry-run --silent -d "${src}" -i "${GITHUB_WORKSPACE}/${patch}" || {
+                  echo "Patch does not apply: ${patch}"
+                  exit 1
+              }
+          done
+          echo "Pinned source ${B1S_KERNEL_COMMIT} and both patches verified"
+
+      - name: Stage the kernel config and patches
+        run: |
+          board=build-armbian/armbian-files/different-files/s912-b1s
+          mkdir -p b1s-kernel-ci/config b1s-kernel-ci/patch/common-kernel-patches
+          # The compile tool selects its template as config-<major>.<minor>.
+          cp "${board}/kernel/config-6.18.48-ophub" b1s-kernel-ci/config/config-6.18
+          cp "${board}"/kernel/patches/*.patch b1s-kernel-ci/patch/common-kernel-patches/
+          sha256sum b1s-kernel-ci/config/config-6.18 b1s-kernel-ci/patch/common-kernel-patches/*.patch
+
+      - name: Compile the pinned kernel
+        id: kernelbuild
+        uses: ./
+        with:
+          build_target: kernel
+          kernel_source: ophub
+          kernel_version: 6.18.y
+          kernel_auto: false
+          kernel_package: all
+          kernel_toolchain: gcc
+          kernel_sign: "-b1s-pm1"
+          kernel_config: b1s-kernel-ci/config
+          kernel_patch: b1s-kernel-ci/patch
+          auto_patch: true
+          delete_source: false
+          enable_log: true
+          compress_format: xz
+          docker_hostpath: /builder
+          docker_image: ophub/armbian-bookworm:arm64
+
+      - name: Verify the patches and package the kernel
+        run: |
+          src=/builder/compile-kernel/kernel/linux-6.18.y
+          grep -A8 'phy_pm_runtime_put' "${src}/drivers/phy/phy-core.c" | grep -q 'pm_runtime_enabled' || {
+              echo "PHY PM patch is missing from the built source"
+              exit 1
+          }
+          grep -q -- '-I$(src)/../shortcut-fe' \
+              "${src}/drivers/net/ethernet/qualcomm/sfe/fast-classifier/Makefile" || {
+              echo "SFE include-path patch is missing from the built source"
+              exit 1
+          }
+          out=/builder/compile-kernel/output
+          tarball="$(find "${out}" -maxdepth 1 -name '*.tar.gz' ! -name 'deb-*' | head -n 1)"
+          [[ -n "${tarball}" ]] || { echo "No kernel tarball was produced"; exit 1; }
+
+          # The packaging script names the top-level directory after the plain
+          # version (6.18.48) while the boot file carries the signature. The
+          # image rebuild and the release download both key on the signed name,
+          # so normalise the tarball to <signed-version>.tar.gz.
+          bootfile="$(tar -tzf "${tarball}" | grep -oE '(^|/)boot-[^/]+\.tar\.gz$' | head -n 1)"
+          version="${bootfile##*/}"; version="${version#boot-}"; version="${version%.tar.gz}"
+          test "${version}" = "${B1S_KERNEL_VERSION}" || {
+              echo "Unexpected kernel version: [ ${version} ]"
+              exit 1
+          }
+
+          rm -rf /tmp/b1s-kernel /tmp/b1s-kernel-pack
+          mkdir -p /tmp/b1s-kernel /tmp/b1s-kernel-pack/"${version}"
+          tar -xzf "${tarball}" -C /tmp/b1s-kernel
+          inner="$(find /tmp/b1s-kernel -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          [[ -n "${inner}" ]] || { echo "Kernel tarball has no directory"; exit 1; }
+          cp -a "${inner}/." /tmp/b1s-kernel-pack/"${version}"/
+
+          mkdir -p build-armbian/kernel/stable b1s-kernel-ci/dist
+          rm -rf build-armbian/kernel/stable/"${version}"
+          cp -a /tmp/b1s-kernel-pack/"${version}" build-armbian/kernel/stable/
+          ( cd "build-armbian/kernel/stable/${version}" && sha256sum -c sha256sums )
+
+          tar -czf b1s-kernel-ci/dist/"${version}".tar.gz -C /tmp/b1s-kernel-pack "${version}"
+          rm -rf /tmp/b1s-kernel /tmp/b1s-kernel-pack
+          echo "KERNEL_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "KERNEL_TARBALL=b1s-kernel-ci/dist/${version}.tar.gz" >> "${GITHUB_ENV}"
+
+      - name: Publish the kernel packages
+        uses: ophub/upload-to-releases@main
+        if: ${{ env.KERNEL_VERSION != '' && !cancelled() }}
+        with:
+          tag: kernel_stable
+          artifacts: ${{ env.KERNEL_TARBALL }}
+          allow_updates: true
+          remove_artifacts: false
+          replaces_artifacts: true
+          make_latest: false
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            Pinned B1S kernel built from `ophub/linux-6.18.y@e0497a975383cedc8b8d8a7c9e84eac2e2238a6e`
+            with `config-6.18.48-ophub` and the B1S PHY PM / SFE patches.
+            It replaces nothing else: select it explicitly with `armbian_kernel_exact`.
+
+      - name: Remove the kernel build tree
+        run: |
+          sudo rm -rf /builder/compile-kernel /builder/ccache
+          df -h /builder
+
+      - name: Download the base Armbian image
+        id: down
+        working-directory: /builder
+        run: |
+          armbian_buildpath="build/output/images"
+          [[ -d "${armbian_buildpath}" ]] || mkdir -p "${armbian_buildpath}"
+          ln -sfn /builder/build ${{ github.workspace }}/build
+
+          latest_version=$(curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases?per_page=20" | \
+              jq -er --arg release "${B1S_IMAGE_RELEASE}" \
+                  --arg edition "${B1S_IMAGE_EDITION}" \
+                  -f "${{ github.workspace }}/tools/select-armbian-release.jq")
+
+          [[ -z "${latest_version}" || "${latest_version}" == "null" ]] && {
+              echo "Error: no base Armbian image release found."
+              exit 1
+          }
+
+          latest_url="$(echo ${latest_version} | jq -r '.url')"
+          armbian_filename="$(echo ${latest_version} | jq -r '.name')"
+          echo "Selected base image: ${armbian_filename}"
+          curl -fsSL \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/octet-stream" \
+              "${latest_url}" \
+              -o "${armbian_buildpath}/${armbian_filename}"
+          cd "${armbian_buildpath}" && gzip -df *.img.gz && sync
+
+          echo "build_tag=Armbian_${B1S_IMAGE_RELEASE}_arm64_${B1S_IMAGE_EDITION}_$(date +"%Y.%m")" >> "${GITHUB_ENV}"
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Rebuild the image with the new kernel
+        uses: ./
+        if: ${{ steps.down.outputs.status == 'success' && !cancelled() }}
+        with:
+          build_target: armbian
+          armbian_path: build/output/images/*.img
+          armbian_board: s912-b1s
+          armbian_edition: server
+          install_b1s_dependencies: "true"
+          armbian_kernel: 6.18.y
+          armbian_kernel_exact: ${{ env.KERNEL_VERSION }}
+          auto_kernel: false
+          armbian_fstype: ext4
+
+      - name: Upload the image
+        uses: ophub/upload-to-releases@main
+        if: ${{ env.PACKAGED_STATUS == 'success' && !cancelled() }}
+        with:
+          tag: ${{ env.build_tag }}
+          artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
+          allow_updates: true
+          remove_artifacts: false
+          replaces_artifacts: true
+          make_latest: true
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            B1S image rebuilt with the pinned kernel `6.18.48-b1s-pm1`
+            (PHY PM and SFE patches applied) and the stage1 DTB compiled from source.
+            Default username: `root`, password: `1234`.
+            The image still requires boot validation on a recoverable medium.

@@ -530,6 +530,39 @@ class DependencyInstallerTests(unittest.TestCase):
         rebuild = (ROOT / "rebuild").read_text()
         self.assertIn('[[ "${lk}" == "${ck}" ]] && build_kernel+=("${lk}")', rebuild)
 
+    def test_one_click_kernel_and_image_pipeline(self):
+        import yaml
+        path = ROOT / ".github/workflows/build-b1s-kernel-and-image.yml"
+        text = path.read_text()
+        workflow = yaml.safe_load(text)
+        triggers = workflow.get("on", workflow.get(True))
+        # A one-click run must not ask the operator to choose anything.
+        self.assertIn("workflow_dispatch", triggers)
+        self.assertIsNone(triggers["workflow_dispatch"])
+        self.assertNotIn("inputs:", text)
+
+        env = workflow["env"]
+        self.assertEqual(env["B1S_KERNEL_COMMIT"], "e0497a975383cedc8b8d8a7c9e84eac2e2238a6e")
+        self.assertEqual(env["B1S_KERNEL_VERSION"], "6.18.48-b1s-pm1")
+        self.assertEqual(env["B1S_IMAGE_RELEASE"], "bookworm")
+        self.assertEqual(env["B1S_IMAGE_EDITION"], "server")
+
+        job = workflow["jobs"]["build"]
+        self.assertEqual(job["runs-on"], "ubuntu-24.04-arm")
+        self.assertEqual(workflow["permissions"]["contents"], "write")
+
+        self.assertIn("--strip-components=1", text)
+        self.assertIn("patch -p1 --dry-run", text)
+        self.assertIn("uses: ./", text)
+        self.assertIn("kernel_auto: false", text)
+        self.assertIn("kernel_config: b1s-kernel-ci/config", text)
+        self.assertIn("kernel_patch: b1s-kernel-ci/patch", text)
+        self.assertIn('tar -czf b1s-kernel-ci/dist/"${version}".tar.gz', text)
+        self.assertIn("armbian_kernel_exact: ${{ env.KERNEL_VERSION }}", text)
+        self.assertIn("tag: kernel_stable", text)
+        self.assertIn("tag: ${{ env.build_tag }}", text)
+        self.assertIn('install_b1s_dependencies: "true"', text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

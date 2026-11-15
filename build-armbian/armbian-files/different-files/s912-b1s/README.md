@@ -83,6 +83,20 @@ python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
 只告警，因此 CI 产物不等于本机已验证的 `6.18.48-b1s-pm1`，正式使用前需在可恢复
 介质上启动验收。
 
+### 一键编译内核和镜像
+
+`build-b1s-kernel-and-image.yml` 没有任何输入：在 Actions 中选择
+“Build B1S kernel and image”并点击 Run workflow 即可。它固定使用
+`ophub/linux-6.18.y@e0497a97`、`config-6.18.48-ophub` 与 `kernel/patches/*`，
+先校验哈希、对固定源码 `--dry-run` 应用两个补丁，再在 `ubuntu-24.04-arm`
+上编译 `6.18.48-b1s-pm1` 并发布到 `kernel_stable`；随后用同一版本重建
+`bookworm server` 镜像，上传到 `Armbian_bookworm_arm64_server_<YYYY.MM>`。
+编译后会 grep 源码确认 PHY PM 与 SFE 补丁确实在树内，避免上游脚本“补丁失败
+仅告警”造成的假成功。
+
+前提是该月 release 中已有 `Armbian_26.05.0-trunk_bookworm_arm64_*.img.gz`
+基础镜像；整轮约 2–3 小时，产物仍需在可恢复介质上启动验收。
+
 ### 用户态配置与依赖
 
 `copy_files` 复制板级 rootfs；内核安装及模块精简/depmod 完成后，打包前运行

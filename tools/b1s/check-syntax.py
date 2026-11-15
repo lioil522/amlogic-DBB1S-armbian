@@ -31,6 +31,8 @@ def walk(item):
 
 
 for path in (root / "action.yml", root / ".github/workflows/build-armbian-using-releases-files.yml",
+             root / ".github/workflows/compile-kernel.yml",
+             root / ".github/workflows/build-b1s-kernel-and-image.yml",
              root / ".github/workflows/check-b1s-adaptation.yml"):
     walk(yaml.safe_load(path.read_text()))
     print("YAML and shell syntax OK:", path.relative_to(root))
