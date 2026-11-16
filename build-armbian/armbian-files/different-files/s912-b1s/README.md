@@ -87,7 +87,7 @@ python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
 
 `build-b1s-kernel-and-image.yml` 没有任何输入：在 Actions 中选择
 “Build B1S kernel and image”并点击 Run workflow 即可。它每次运行都抓取
-`ophub/linux-6.18.y` 分支的最新提交，先核对 `config-6.18.48-ophub` 与
+`ophub/linux-6.18.y` 仓库 `main` 分支的最新提交，先核对 `config-6.18.48-ophub` 与
 `kernel/patches/*` 的 SHA-256，再对最新源码 `--dry-run` 预演两个补丁；补丁
 不适用时直接失败，不会悄悄编出没有 PHY PM 修复的内核。随后用该源码编译
 `6.18.x-b1s-pm1` 并发布到 `kernel_stable`，同时记录实际提交号；再用同一

@@ -553,7 +553,7 @@ class DependencyInstallerTests(unittest.TestCase):
 
         # The kernel source is resolved at run time, not frozen in the file.
         self.assertNotIn("e0497a97", text)
-        self.assertIn('git clone --quiet --depth=1 --branch="${B1S_KERNEL_SERIES}"', text)
+        self.assertIn('git clone --quiet --depth=1 --branch=main', text)
         self.assertIn("B1S_KERNEL_SOURCE_VERSION=${version}", text)
         self.assertIn('expected="${B1S_KERNEL_SOURCE_VERSION}${B1S_KERNEL_SIGN}"', text)
         self.assertIn("patch -p1 --dry-run", text)

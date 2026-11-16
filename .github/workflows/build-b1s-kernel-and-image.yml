@@ -96,15 +96,16 @@ jobs:
           src=/builder/compile-kernel/kernel/linux-6.18.y
           rm -rf "${src}"
           mkdir -p "$(dirname "${src}")"
-          # Follow the newest commit on the series branch instead of a frozen
-          # snapshot; the resolved commit and version are exported so the
-          # published package stays traceable.
-          git clone --quiet --depth=1 --branch="${B1S_KERNEL_SERIES}" \
+          # Follow the newest commit of the series repository (ophub keeps a
+          # single main branch per kernel series) instead of a frozen snapshot;
+          # the resolved commit and version are exported so the published
+          # package stays traceable.
+          git clone --quiet --depth=1 --branch=main \
               https://github.com/ophub/linux-6.18.y.git "${src}"
           commit="$(git -C "${src}" rev-parse HEAD)"
           version="$(sed -n 's/^VERSION = //p' "${src}/Makefile").$(sed -n 's/^PATCHLEVEL = //p' "${src}/Makefile").$(sed -n 's/^SUBLEVEL = //p' "${src}/Makefile")"
           [[ "${version}" =~ ^6\.18\.[0-9]+$ ]] || {
-              echo "Unexpected kernel version on branch ${B1S_KERNEL_SERIES}: [ ${version} ]"
+              echo "Unexpected kernel version on the ${B1S_KERNEL_SERIES} series: [ ${version} ]"
               exit 1
           }
           for patch in build-armbian/armbian-files/different-files/s912-b1s/kernel/patches/*.patch; do
