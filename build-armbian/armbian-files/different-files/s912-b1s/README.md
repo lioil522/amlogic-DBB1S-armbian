@@ -86,14 +86,17 @@ python3 -m unittest discover -s tools/b1s -p 'test_*.py' -v
 ### 一键编译内核和镜像
 
 `build-b1s-kernel-and-image.yml` 没有任何输入：在 Actions 中选择
-“Build B1S kernel and image”并点击 Run workflow 即可。它固定使用
-`ophub/linux-6.18.y@e0497a97`、`config-6.18.48-ophub` 与 `kernel/patches/*`，
-先校验哈希、对固定源码 `--dry-run` 应用两个补丁，再在 `ubuntu-24.04-arm`
-上编译 `6.18.48-b1s-pm1` 并发布到 `kernel_stable`；随后用同一版本重建
-`bookworm server` 镜像，上传到 `Armbian_bookworm_arm64_server_<YYYY.MM>`。
-编译后会 grep 源码确认 PHY PM 与 SFE 补丁确实在树内，避免上游脚本“补丁失败
-仅告警”造成的假成功。
+“Build B1S kernel and image”并点击 Run workflow 即可。它每次运行都抓取
+`ophub/linux-6.18.y` 分支的最新提交，先核对 `config-6.18.48-ophub` 与
+`kernel/patches/*` 的 SHA-256，再对最新源码 `--dry-run` 预演两个补丁；补丁
+不适用时直接失败，不会悄悄编出没有 PHY PM 修复的内核。随后用该源码编译
+`6.18.x-b1s-pm1` 并发布到 `kernel_stable`，同时记录实际提交号；再用同一
+版本重建 `bookworm server` 镜像，上传到
+`Armbian_bookworm_arm64_server_<YYYY.MM>`。编译后还会 grep 源码确认 PHY PM
+与 SFE 补丁确实在树内。
 
+配置模板仍为 `config-6.18.48-ophub`（6.18 系列通用），补丁分别经过 6.18.48
+与运行时最新 6.18.x 的验证；若后续版本使补丁冲突，工作流会在编译前停止。
 前提是该月 release 中已有 `Armbian_26.05.0-trunk_bookworm_arm64_*.img.gz`
 基础镜像；整轮约 2–3 小时，产物仍需在可恢复介质上启动验收。
 

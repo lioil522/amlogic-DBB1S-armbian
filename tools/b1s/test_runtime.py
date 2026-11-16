@@ -542,8 +542,8 @@ class DependencyInstallerTests(unittest.TestCase):
         self.assertNotIn("inputs:", text)
 
         env = workflow["env"]
-        self.assertEqual(env["B1S_KERNEL_COMMIT"], "e0497a975383cedc8b8d8a7c9e84eac2e2238a6e")
-        self.assertEqual(env["B1S_KERNEL_VERSION"], "6.18.48-b1s-pm1")
+        self.assertEqual(env["B1S_KERNEL_SERIES"], "6.18.y")
+        self.assertEqual(env["B1S_KERNEL_SIGN"], "-b1s-pm1")
         self.assertEqual(env["B1S_IMAGE_RELEASE"], "bookworm")
         self.assertEqual(env["B1S_IMAGE_EDITION"], "server")
 
@@ -551,7 +551,11 @@ class DependencyInstallerTests(unittest.TestCase):
         self.assertEqual(job["runs-on"], "ubuntu-24.04-arm")
         self.assertEqual(workflow["permissions"]["contents"], "write")
 
-        self.assertIn("--strip-components=1", text)
+        # The kernel source is resolved at run time, not frozen in the file.
+        self.assertNotIn("e0497a97", text)
+        self.assertIn('git clone --quiet --depth=1 --branch="${B1S_KERNEL_SERIES}"', text)
+        self.assertIn("B1S_KERNEL_SOURCE_VERSION=${version}", text)
+        self.assertIn('expected="${B1S_KERNEL_SOURCE_VERSION}${B1S_KERNEL_SIGN}"', text)
         self.assertIn("patch -p1 --dry-run", text)
         self.assertIn("uses: ./", text)
         self.assertIn("kernel_auto: false", text)

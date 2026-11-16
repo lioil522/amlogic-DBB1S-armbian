@@ -1,6 +1,7 @@
 #==========================================================================
-# One-run B1S pipeline: pinned kernel first, then the Armbian image that
-# carries it. No inputs are required; every value below is fixed.
+# One-run B1S pipeline: compile the newest 6.18.y kernel with the B1S
+# config and patches, then build the Armbian image that carries it.
+# No inputs are required; every value below is fixed.
 #==========================================================================
 name: Build B1S kernel and image
 
@@ -16,8 +17,8 @@ concurrency:
 
 env:
   TZ: Etc/UTC
-  B1S_KERNEL_COMMIT: e0497a975383cedc8b8d8a7c9e84eac2e2238a6e
-  B1S_KERNEL_VERSION: 6.18.48-b1s-pm1
+  B1S_KERNEL_SERIES: 6.18.y
+  B1S_KERNEL_SIGN: "-b1s-pm1"
   B1S_IMAGE_RELEASE: bookworm
   B1S_IMAGE_EDITION: server
 
@@ -76,7 +77,7 @@ jobs:
           df -Th
           echo "status=success" >> ${GITHUB_OUTPUT}
 
-      - name: Verify the pinned kernel inputs
+      - name: Verify the kernel config and patches
         run: |
           board=build-armbian/armbian-files/different-files/s912-b1s
           python3 - "${board}/kernel/reference.json" "${board}/kernel/config-6.18.48-ophub" "${board}/kernel/patches" <<'PY'
@@ -87,26 +88,34 @@ jobs:
           for patch in reference["patches"]:
               path = pathlib.Path(sys.argv[3]) / pathlib.Path(patch["file"]).name
               assert hashlib.sha256(path.read_bytes()).hexdigest() == patch["sha256"], patch["file"]
-          print("Pinned kernel inputs verified against reference.json")
+          print("Kernel config and patches verified against reference.json")
           PY
 
-      - name: Download the pinned kernel source
+      - name: Fetch the latest kernel source
         run: |
           src=/builder/compile-kernel/kernel/linux-6.18.y
           rm -rf "${src}"
-          mkdir -p "${src}"
-          curl -fsSL "https://github.com/ophub/linux-6.18.y/archive/${B1S_KERNEL_COMMIT}.tar.gz" \
-              | tar -xz --strip-components=1 -C "${src}"
-          test "$(sed -n 's/^VERSION = //p' "${src}/Makefile")" = "6"
-          test "$(sed -n 's/^PATCHLEVEL = //p' "${src}/Makefile")" = "18"
-          test "$(sed -n 's/^SUBLEVEL = //p' "${src}/Makefile")" = "48"
+          mkdir -p "$(dirname "${src}")"
+          # Follow the newest commit on the series branch instead of a frozen
+          # snapshot; the resolved commit and version are exported so the
+          # published package stays traceable.
+          git clone --quiet --depth=1 --branch="${B1S_KERNEL_SERIES}" \
+              https://github.com/ophub/linux-6.18.y.git "${src}"
+          commit="$(git -C "${src}" rev-parse HEAD)"
+          version="$(sed -n 's/^VERSION = //p' "${src}/Makefile").$(sed -n 's/^PATCHLEVEL = //p' "${src}/Makefile").$(sed -n 's/^SUBLEVEL = //p' "${src}/Makefile")"
+          [[ "${version}" =~ ^6\.18\.[0-9]+$ ]] || {
+              echo "Unexpected kernel version on branch ${B1S_KERNEL_SERIES}: [ ${version} ]"
+              exit 1
+          }
           for patch in build-armbian/armbian-files/different-files/s912-b1s/kernel/patches/*.patch; do
               patch -p1 --dry-run --silent -d "${src}" -i "${GITHUB_WORKSPACE}/${patch}" || {
-                  echo "Patch does not apply: ${patch}"
+                  echo "Patch does not apply to the latest ${B1S_KERNEL_SERIES} source: ${patch}"
                   exit 1
               }
           done
-          echo "Pinned source ${B1S_KERNEL_COMMIT} and both patches verified"
+          echo "B1S_KERNEL_SOURCE_COMMIT=${commit}" >> "${GITHUB_ENV}"
+          echo "B1S_KERNEL_SOURCE_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "Latest ${B1S_KERNEL_SERIES} source is ${version} at ${commit}; both patches apply"
 
       - name: Stage the kernel config and patches
         run: |
@@ -117,17 +126,17 @@ jobs:
           cp "${board}"/kernel/patches/*.patch b1s-kernel-ci/patch/common-kernel-patches/
           sha256sum b1s-kernel-ci/config/config-6.18 b1s-kernel-ci/patch/common-kernel-patches/*.patch
 
-      - name: Compile the pinned kernel
+      - name: Compile the kernel
         id: kernelbuild
         uses: ./
         with:
           build_target: kernel
           kernel_source: ophub
-          kernel_version: 6.18.y
+          kernel_version: ${{ env.B1S_KERNEL_SERIES }}
           kernel_auto: false
           kernel_package: all
           kernel_toolchain: gcc
-          kernel_sign: "-b1s-pm1"
+          kernel_sign: ${{ env.B1S_KERNEL_SIGN }}
           kernel_config: b1s-kernel-ci/config
           kernel_patch: b1s-kernel-ci/patch
           auto_patch: true
@@ -159,8 +168,9 @@ jobs:
           # so normalise the tarball to <signed-version>.tar.gz.
           bootfile="$(tar -tzf "${tarball}" | grep -oE '(^|/)boot-[^/]+\.tar\.gz$' | head -n 1)"
           version="${bootfile##*/}"; version="${version#boot-}"; version="${version%.tar.gz}"
-          test "${version}" = "${B1S_KERNEL_VERSION}" || {
-              echo "Unexpected kernel version: [ ${version} ]"
+          expected="${B1S_KERNEL_SOURCE_VERSION}${B1S_KERNEL_SIGN}"
+          test "${version}" = "${expected}" || {
+              echo "Unexpected kernel version: [ ${version} ], expected [ ${expected} ]"
               exit 1
           }
 
@@ -193,8 +203,9 @@ jobs:
           make_latest: false
           gh_token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            Pinned B1S kernel built from `ophub/linux-6.18.y@e0497a975383cedc8b8d8a7c9e84eac2e2238a6e`
+            B1S kernel `${{ env.KERNEL_VERSION }}` built from `ophub/linux-6.18.y@${{ env.B1S_KERNEL_SOURCE_COMMIT }}`
             with `config-6.18.48-ophub` and the B1S PHY PM / SFE patches.
+            The workflow verified both patches in the compiler source tree before packaging.
             It replaces nothing else: select it explicitly with `armbian_kernel_exact`.
 
       - name: Remove the kernel build tree
@@ -262,7 +273,7 @@ jobs:
           make_latest: true
           gh_token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            B1S image rebuilt with the pinned kernel `6.18.48-b1s-pm1`
+            B1S image rebuilt with kernel `${{ env.KERNEL_VERSION }}`
             (PHY PM and SFE patches applied) and the stage1 DTB compiled from source.
             Default username: `root`, password: `1234`.
             The image still requires boot validation on a recoverable medium.
